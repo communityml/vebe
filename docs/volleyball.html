@@ -681,8 +681,10 @@ function handleInput() {
           }
 
           // Hit when ball is realistically reachable
-          if (p.hitCooldown <= 0 && Math.hypot(ball.x-p.x, ball.y-(p.y-PLAYER_H*0.5)) < 90) {
-            tryHit(p);
+          const aiIsAirborne = !p.onGround || p.jumpTimer > 0;
+          const aiMaxDist = aiIsAirborne ? 28 : 60;
+          if (p.hitCooldown <= 0 && Math.hypot(ball.x-p.x, ball.y-(p.y-PLAYER_H*0.5)) < aiMaxDist) {
+            tryHit(p, false, aiIsAirborne);
           }
 
         } else {
@@ -769,8 +771,11 @@ function tryHit(p, fromDive, wasInAir) {
 
   // Tick ball forward up to 8 steps to find real contact point
   // Divers get a larger reach and longer lookahead — they've committed their body
-  const CONTACT_R = fromDive ? 90 : 75;
-  const MAX_TICKS = fromDive ? 24 : 12;
+  const isAirborne = (!p.onGround || (p.jumpTimer > 0) || wasInAir);
+  const CONTACT_R = fromDive ? 90 : (isAirborne ? 28 : 60);
+  const MAX_TICKS = fromDive ? 24 : (isAirborne ? 0 : 10);
+  const ownSide = p.id===0 ? ball.x < NET_X + BALL_R : ball.x > NET_X - BALL_R;
+  if (isAirborne && !ownSide) return; // can't spike a ball on the other side
   let contacted = false;
   let bx = ball.x, by = ball.y, bvx = ball.vx, bvy = ball.vy;
 
@@ -803,7 +808,8 @@ function tryHit(p, fromDive, wasInAir) {
   if (isServeContact) p.isServingHit = false;
   const side         = p.id === 0 ? 0 : 1;
   const nextHitOnSide = sideHits[side] + 1;
-  const doVertical   = verticalHitMode && nextHitOnSide === 1 && rallyHits > 1 && !canSpike;
+  const doVertical   = verticalHitMode && nextHitOnSide === 1 && rallyHits > 1 && !canSpike
+                       && (p.id===0 ? NET_X - p.x > W*0.2 : p.x - NET_X > W*0.2);
   const serveInProgress = rallyHits === 0; // toss phase through first hit — set impossible
 
   // Determine pose — set is impossible during serve sequence
@@ -814,8 +820,10 @@ function tryHit(p, fromDive, wasInAir) {
   else if (ballAboveHead)              poseType = 'set';
   else                                 poseType = 'bump';
 
-  // Out of range — launch dive (only from ground)
-  if (!contacted && !fromDive && p.onGround) {
+  // Out of range — launch dive (only from ground, ball on own side, within reach)
+  const ballOnOwnSide = p.id===0 ? ball.x < NET_X : ball.x > NET_X;
+  const diveRange = W * 0.35;
+  if (!contacted && !fromDive && p.onGround && ballOnOwnSide && Math.abs(ball.x - p.x) < diveRange) {
     p.lastHitType = 'bump';
     p.diving = true;
     p.diveDir = dx > 0 ? 1 : -1;
