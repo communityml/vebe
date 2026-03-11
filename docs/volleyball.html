@@ -1444,10 +1444,23 @@ const STEP_MS = 1000/60;
 
 function loop(timestamp) {
   if (!gameRunning || paused) return;
-  lastTime = timestamp||0;
+
+  const raw = timestamp || 0;
+  const elapsed = lastTime ? Math.min(raw - lastTime, 100) : 0; // cap at 100ms to avoid spiral
+  lastTime = raw;
 
   handleInput();
-  physicsStep();
+
+  const scaledElapsed = elapsed * timeScale;
+  physAccum += scaledElapsed;
+  let steps = 0;
+  while (physAccum >= STEP_MS && steps < 3) {
+    physicsStep();
+    physAccum -= STEP_MS;
+    steps++;
+  }
+  // If we couldn't keep up, discard excess to prevent spiral of death
+  if (physAccum > STEP_MS * 2) physAccum = 0;
 
   ctx.clearRect(0,0,W,H);
   drawBackground();
@@ -1459,12 +1472,7 @@ function loop(timestamp) {
   drawFlash();
   drawHUD();
 
-  const delay = (1 - timeScale) * 50;
-  if (delay > 4) {
-    setTimeout(() => requestAnimationFrame(loop), delay);
-  } else {
-    requestAnimationFrame(loop);
-  }
+  requestAnimationFrame(loop);
 }
 </script>
 </body>
