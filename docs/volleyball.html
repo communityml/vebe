@@ -1,0 +1,1296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>SPIKE! Volleyball</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Rajdhani:wght@400;600;700&display=swap');
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background:#0a0a1a;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    min-height:100vh; font-family:'Rajdhani',sans-serif; overflow:hidden;
+  }
+  #title {
+    font-family:'Bebas Neue',cursive; font-size:3rem; letter-spacing:0.15em;
+    background:linear-gradient(135deg,#ff6b35,#f7c59f,#ffe66d);
+    -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+    margin-bottom:8px;
+  }
+  #scoreboard { display:flex; gap:60px; align-items:center; margin-bottom:10px; }
+  .score-block { text-align:center; }
+  .player-label { font-size:0.85rem; letter-spacing:0.2em; text-transform:uppercase; color:#888; margin-bottom:2px; }
+  .score-num { font-family:'Bebas Neue',cursive; font-size:3.5rem; line-height:1; }
+  #p1score { color:#ff6b35; text-shadow:0 0 20px #ff6b3566; }
+  #p2score { color:#4ecdc4; text-shadow:0 0 20px #4ecdc466; }
+  .score-divider { font-family:'Bebas Neue',cursive; font-size:2rem; color:#444; }
+  #gameCanvas { border:2px solid #222; border-radius:8px; box-shadow:0 0 60px #ff6b3522,0 0 120px #0005; display:block; }
+  #controls { display:flex; gap:40px; margin-top:12px; color:#666; font-size:0.8rem; }
+  .ctrl-group { text-align:center; }
+  .ctrl-group span { display:block; font-size:0.7rem; color:#444; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.1em; }
+  kbd { background:#1a1a2e; border:1px solid #333; border-radius:4px; padding:2px 6px; font-family:'Rajdhani',sans-serif; font-size:0.8rem; color:#aaa; }
+  #wrapper { position:relative; }
+
+  .overlay {
+    position:absolute; top:0;left:0;right:0;bottom:0;
+    background:#0a0a1acc; backdrop-filter:blur(4px);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    border-radius:8px; z-index:10;
+  }
+  .overlay h2 { font-family:'Bebas Neue',cursive; font-size:3rem; color:#ffe66d; letter-spacing:0.1em; margin-bottom:16px; }
+  .overlay p { color:#aaa; margin:3px 0; font-size:0.92rem; }
+  .big-btn {
+    margin-top:22px; padding:12px 50px;
+    font-family:'Bebas Neue',cursive; font-size:1.8rem; letter-spacing:0.15em;
+    background:linear-gradient(135deg,#ff6b35,#ff8c42); color:#fff;
+    border:none; border-radius:6px; cursor:pointer;
+    box-shadow:0 0 30px #ff6b3566; transition:transform 0.1s,box-shadow 0.1s;
+  }
+  .big-btn:hover { transform:scale(1.05); box-shadow:0 0 50px #ff6b3599; }
+
+  .ai-row { display:flex; gap:32px; margin-top:16px; }
+  .ai-label { display:flex; align-items:center; gap:8px; cursor:pointer; color:#ccc; font-size:1rem; letter-spacing:0.05em; }
+  .ai-label input { width:18px; height:18px; cursor:pointer; }
+  #aiP1 { accent-color:#ff6b35; }
+  #aiP2 { accent-color:#4ecdc4; }
+
+  .speed-row { display:flex; align-items:center; gap:12px; margin-top:14px; color:#aaa; font-size:0.9rem; }
+  #speedSlider { accent-color:#ffe66d; width:140px; cursor:pointer; }
+  #speedVal { font-family:'Bebas Neue',cursive; font-size:1.2rem; color:#ffe66d; min-width:42px; text-align:center; }
+
+  #pauseScreen { display:none; }
+  .mobile-only { display: none; }
+
+  /* ── Mobile touch controls ── */
+  #touchControls {
+    display: none;
+    width: 100%;
+    background: #0a0a1a;
+    justify-content: space-between;
+    align-items: center;
+  }
+  #tc-left { display: flex; flex-direction: column; gap: 10px; align-items: center; }
+  #tc-right { display: flex; flex-direction: column; gap: 10px; align-items: center; }
+
+  .touch-btn {
+    width: 70px; height: 70px;
+    border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.2);
+    background: rgba(255,255,255,0.07);
+    color: rgba(255,255,255,0.65);
+    font-size: 1.6rem;
+    font-family: 'Rajdhani', sans-serif; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none; -webkit-user-select: none;
+    touch-action: manipulation;
+    transition: background 0.07s, border-color 0.07s, color 0.07s;
+    /* important: no outline flash on mobile */
+    outline: none; -webkit-appearance: none;
+  }
+  .touch-btn:active, .touch-btn.active {
+    background: rgba(255,255,255,0.25);
+    border-color: rgba(255,255,255,0.8);
+    color: #fff;
+  }
+  #btn-hit {
+    width: 84px; height: 84px; font-size: 1rem; letter-spacing: 0.05em;
+    border-color: rgba(255,107,53,0.5); color: rgba(255,107,53,0.85);
+    background: rgba(255,107,53,0.08);
+  }
+  #btn-hit:active, #btn-hit.active {
+    background: rgba(255,107,53,0.3); border-color: #ff6b35; color: #ff6b35;
+  }
+
+  @media (max-width: 960px) {
+    html { height: 100%; }
+    body {
+      height: 100dvh;
+      flex-direction: column;
+      justify-content: flex-start;
+      align-items: stretch;
+      padding: 0;
+      overflow: hidden;
+    }
+    #title { display: none; }
+    #scoreboard { display: none; }
+    #controls { display: none; }
+    #wrapper {
+      width: 100vw;
+      flex-shrink: 0;
+      position: relative;
+    }
+    #gameCanvas {
+      width: 100vw !important;
+      height: auto !important;
+      display: block;
+      border-radius: 0;
+      border-left: none; border-right: none;
+    }
+    #touchControls {
+      display: flex !important;
+      flex: 1 1 0;
+      min-height: 0;
+      padding: 0 28px 24px;
+      align-items: center;
+      justify-content: space-between;
+    }
+    #tc-left, #tc-right {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+    #tc-left  { grid-template-areas: "jump ." "left ."; }
+    #tc-right { grid-template-areas: ". hit" ". right"; }
+    #btn-jump  { grid-area: jump; }
+    #btn-left  { grid-area: left; }
+    #btn-hit   { grid-area: hit; }
+    #btn-right { grid-area: right; }
+    .touch-btn { width: 80px; height: 80px; }
+    #btn-hit   { width: 96px; height: 96px; }
+    #startScreen, #pauseScreen {
+      position: fixed !important;
+      top: 0; left: 0; right: 0; bottom: 0;
+      border-radius: 0;
+      overflow-y: auto;
+      padding: 32px 20px 24px;
+      z-index: 100;
+    }
+    .overlay h2 { font-size: 2rem; margin-bottom: 10px; }
+    .overlay p  { font-size: 0.85rem; }
+    .mobile-hide { display: none !important; }
+    .mobile-only { display: block; }
+    .big-btn { margin-top: 14px; padding: 12px 40px; font-size: 1.5rem; }
+    .ai-row { gap: 16px; flex-wrap: wrap; justify-content: center; }
+    #mobileScores {
+      position: absolute; top: 6px; left: 0; right: 0;
+      display: flex; justify-content: center; gap: 28px;
+      pointer-events: none; z-index: 4;
+    }
+    .ms-block { font-family:'Bebas Neue',cursive; font-size:2rem; line-height:1; text-align:center; }
+    .ms-label { font-family:'Rajdhani',sans-serif; font-size:0.6rem; letter-spacing:0.15em; color:#888; text-transform:uppercase; }
+    #ms-p1 { color:#ff6b35; text-shadow:0 0 16px #ff6b3588; }
+    #ms-p2 { color:#4ecdc4; text-shadow:0 0 16px #4ecdc488; }
+    .ms-div { font-family:'Bebas Neue',cursive; font-size:1.4rem; color:#444; align-self:center; }
+    #btnPause { top: 6px !important; right: 6px !important; }
+  }
+</style>
+</head>
+<body>
+
+<div id="title">⚡ SPIKE! ⚡</div>
+
+<div id="scoreboard">
+  <div class="score-block">
+    <div class="player-label">Player 1</div>
+    <div class="score-num" id="p1score">0</div>
+  </div>
+  <div class="score-divider">—</div>
+  <div class="score-block">
+    <div class="player-label">Player 2</div>
+    <div class="score-num" id="p2score">0</div>
+  </div>
+</div>
+
+<div id="wrapper">
+  <canvas id="gameCanvas" width="900" height="500"></canvas>
+
+  <!-- Mobile pause button -->
+  <button id="btnPause" onclick="if(gameRunning) togglePause()"
+    style="display:none; position:absolute; top:8px; right:8px; z-index:5;
+           background:rgba(0,0,0,0.45); border:1px solid rgba(255,255,255,0.2);
+           color:rgba(255,255,255,0.7); font-size:1.1rem; width:36px; height:36px;
+           border-radius:8px; cursor:pointer; line-height:1;">⏸</button>
+  <div id="mobileScores" style="display:none">
+    <div class="ms-block"><div class="ms-label">P1</div><div id="ms-p1">0</div></div>
+    <div class="ms-div">—</div>
+    <div class="ms-block"><div class="ms-label">P2</div><div id="ms-p2">0</div></div>
+  </div>
+
+  <div id="startScreen" class="overlay">
+    <h2>🏐 Ready to Spike?</h2>
+    <p class="mobile-hide"><kbd>A</kbd><kbd>D</kbd> Move &nbsp;|&nbsp; <kbd>W</kbd> Jump &nbsp;|&nbsp; <kbd>S</kbd> Hit / Serve</p>
+    <p class="mobile-hide" style="margin-top:5px"><kbd>←</kbd><kbd>→</kbd> Move &nbsp;|&nbsp; <kbd>↑</kbd> Jump &nbsp;|&nbsp; <kbd>↓</kbd> Hit / Serve</p>
+    <p class="mobile-hide" style="margin-top:8px; color:#555; font-size:0.8rem"><kbd>Esc</kbd> or <kbd>P</kbd> to pause</p>
+    <p style="margin-top:4px; color:#555; font-size:0.8rem">First to 7 points wins</p>
+    <p class="mobile-only" style="margin-top:6px; color:#888; font-size:0.78rem">◀ ▲ ▶ to move &amp; jump · HIT to hit</p>
+
+    <div class="ai-row">
+      <label class="ai-label"><input type="checkbox" id="aiP1"> P1 CPU</label>
+      <label class="ai-label"><input type="checkbox" id="aiP2"> P2 CPU</label>
+      <label class="ai-label"><input type="checkbox" id="verticalHit"> ↕ Vertical Hit</label>
+    </div>
+
+    <div class="speed-row">
+      <span>Speed</span>
+      <input type="range" id="speedSlider" min="25" max="100" value="50" step="5"
+             oninput="document.getElementById('speedVal').textContent=this.value+'%'">
+      <span id="speedVal">50%</span>
+    </div>
+
+    <div class="speed-row">
+      <span>CPU</span>
+      <input type="range" id="diffSlider" min="1" max="5" value="3" step="1"
+             oninput="document.getElementById('diffVal').textContent=['😴 Easy','🙂 Medium','😤 Hard','😠 Expert','😈 Insane'][this.value-1]">
+      <span id="diffVal">😤 Hard</span>
+    </div>
+
+    <button class="big-btn" onclick="startGame()">SERVE!</button>
+  </div>
+
+  <div id="pauseScreen" class="overlay">
+    <h2>⏸ PAUSED</h2>
+    <p style="color:#666; font-size:0.85rem">Press <kbd>Esc</kbd> or <kbd>P</kbd> to resume</p>
+    <button class="big-btn" onclick="togglePause()">RESUME</button>
+    <button class="big-btn" style="margin-top:12px; background:linear-gradient(135deg,#1a1a2e,#2a2a4e); box-shadow:0 0 20px #0008;" onclick="goHome()">🏠 HOME</button>
+  </div>
+</div>
+
+<!-- Mobile touch controls: outside wrapper so flex:1 fills remaining screen height -->
+<div id="touchControls" style="display:none">
+  <div id="tc-left">
+    <button class="touch-btn" id="btn-jump">▲</button>
+    <div></div>
+    <button class="touch-btn" id="btn-left">◀</button>
+    <div></div>
+  </div>
+  <div id="tc-right">
+    <div></div>
+    <button class="touch-btn" id="btn-hit">HIT</button>
+    <div></div>
+    <button class="touch-btn" id="btn-right">▶</button>
+  </div>
+</div>
+
+<div id="controls">
+  <div class="ctrl-group"><span>Player 1</span><kbd>A</kbd><kbd>W</kbd><kbd>D</kbd> &nbsp;<kbd>S</kbd>=Hit</div>
+  <div class="ctrl-group"><span>Player 2</span><kbd>←</kbd><kbd>↑</kbd><kbd>→</kbd> &nbsp;<kbd>↓</kbd>=Hit</div>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+
+// ── Constants ──────────────────────────────────────────────
+const BASE_GRAVITY = 0.198;
+const GROUND_Y = H - 60;
+const NET_X = W / 2;
+const NET_H = 120;
+const NET_TOP = GROUND_Y - NET_H;
+const PLAYER_W = 36, PLAYER_H = 54;
+const BALL_R = 14;
+const P1_COLOR = '#ff6b35';
+const P2_COLOR = '#4ecdc4';
+
+// ── State ──────────────────────────────────────────────────
+let scores = [0, 0];
+let gameRunning = false;
+let paused = false;
+let rallyActive = false;
+let scoringLocked = false;
+let lastTouched = -1;
+let ball = {};
+let players = [];
+let particles = [];
+let flashMsg = { text:'', timer:0 };
+let serving = 0;
+let serveState = 'waiting';
+let rallyHits = 0;
+let p1AI = false, p2AI = false;
+let timeScale = 0.5;
+let aiDifficulty = 3; // 1=easy … 5=insane
+let verticalHitMode = false;
+// Tracks hits on the current side possession: reset when ball crosses net
+// sideHits[0] = hits by P1's side this possession, sideHits[1] = P2's side
+let sideHits = [0, 0];
+
+const keys = {};
+
+// ── Input ──────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  keys[e.key] = true;
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();
+  if ((e.key==='Escape'||e.key==='p'||e.key==='P') && gameRunning) togglePause();
+});
+document.addEventListener('keyup', e => { keys[e.key] = false; });
+
+function togglePause() {
+  paused = !paused;
+  document.getElementById('pauseScreen').style.display = paused ? 'flex' : 'none';
+  if (!paused) { lastTime = performance.now(); requestAnimationFrame(loop); }
+}
+
+function goHome() {
+  paused = false;
+  gameRunning = false;
+  document.getElementById('pauseScreen').style.display = 'none';
+  document.getElementById('startScreen').style.display = 'flex';
+  scores = [0, 0];
+  updateScoreDisplay();
+  particles = [];
+  ball = {};
+  players = [];
+  const mobScores = document.getElementById('mobileScores');
+  if (mobScores) mobScores.style.display = 'none';
+}
+
+// ── Init ───────────────────────────────────────────────────
+function placeBallForServe(server) {
+  const sx = server === 0 ? W*0.15 : W*0.85;
+  ball = { x:sx, y:GROUND_Y-PLAYER_H-BALL_R-4, vx:0, vy:0, spin:0, trail:[] };
+}
+
+function beginServePhase(server) {
+  serving = server;
+  serveState = 'waiting';
+  scoringLocked = false;
+  rallyActive = false;
+  lastTouched = -1;
+  rallyHits = 0;
+  sideHits = [0, 0];
+  resetPlayers();
+  players[server].x = server===0 ? W*0.15 : W*0.85;
+  placeBallForServe(server);
+}
+
+function resetPlayers() {
+  players = [
+    { x:W*0.2, y:GROUND_Y, vx:0,vy:0, onGround:true, hitCooldown:0, hitAnim:0, facing:1,  id:0, color:P1_COLOR, diveHitTimer:0 },
+    { x:W*0.8, y:GROUND_Y, vx:0,vy:0, onGround:true, hitCooldown:0, hitAnim:0, facing:-1, id:1, color:P2_COLOR, diveHitTimer:0 },
+  ];
+}
+
+function startGame() {
+  document.getElementById('startScreen').style.display = 'none';
+  p1AI = document.getElementById('aiP1').checked;
+  p2AI = document.getElementById('aiP2').checked;
+  timeScale = parseInt(document.getElementById('speedSlider').value) / 100;
+  aiDifficulty = parseInt(document.getElementById('diffSlider').value);
+  verticalHitMode = document.getElementById('verticalHit').checked;
+  scores = [0, 0]; updateScoreDisplay();
+  const isMob = window.innerWidth <= 960;
+  const mobScores = document.getElementById('mobileScores');
+  if (mobScores) mobScores.style.display = isMob ? 'flex' : 'none';
+  const btnPause = document.getElementById('btnPause');
+  if (btnPause) btnPause.style.display = isMob ? 'block' : 'none';
+  gameRunning = true; paused = false;
+  resetPlayers();
+  beginServePhase(0);
+  lastTime = performance.now();
+  requestAnimationFrame(loop);
+}
+
+function launchServe(server) {
+  serveState = 'live';
+  rallyActive = true;
+  ball.y = players[server].y - PLAYER_H - BALL_R - 4;
+  ball.vx = (server===0 ? 5 : -5) + (players[server].lastVx || 0) * 0.5;
+  ball.vy = -9.45;
+  lastTouched = server;
+  players[server].hitCooldown = 30;
+  players[server].hitAnim = 14;
+  spawnParticles(ball.x, ball.y, players[server].color, 12);
+}
+
+// ── Physics step (runs at effective 60fps * timeScale) ─────
+function physicsStep() {
+  if (rallyActive) {
+    ball.trail.push({x:ball.x, y:ball.y});
+    if (ball.trail.length > 12) ball.trail.shift();
+
+    ball.vy += BASE_GRAVITY;
+    ball.x  += ball.vx;
+    ball.y  += ball.vy;
+    ball.spin += ball.vx * 0.04;
+
+    // Side walls → OUT: whoever last touched it hit it out, other player scores
+    if (!scoringLocked && (ball.x - BALL_R < 0 || ball.x + BALL_R > W)) {
+      scoringLocked = true; rallyActive = false;
+      ball.x = ball.x - BALL_R < 0 ? BALL_R : W - BALL_R;
+      ball.vx = 0; ball.vy = 0;
+      // The player who last hit it sent it out — award point to the other player
+      const scorer = lastTouched === 0 ? 1 : 0;
+      spawnParticles(ball.x, ball.y, '#ffffff', 22);
+      showFlash('📤 OUT!');
+      scorePoint(scorer);
+      return;
+    }
+
+    // Net collision (only when below net top)
+    const netLeft=NET_X-6, netRight=NET_X+6;
+    if (ball.x+BALL_R > netLeft && ball.x-BALL_R < netRight && ball.y+BALL_R > NET_TOP) {
+      if (ball.vx>0) ball.x = netLeft-BALL_R;
+      else           ball.x = netRight+BALL_R;
+      ball.vx *= -0.6;
+      ball.vy *= 0.7;
+      spawnParticles(ball.x, ball.y, '#ffffff', 8);
+    }
+
+    // Detect ball crossing net cleanly (not bouncing) — reset receiving side's hit count
+    const prevSide = ball._lastSide;
+    const curSide  = ball.x < NET_X ? 0 : 1;
+    if (prevSide !== undefined && prevSide !== curSide) {
+      sideHits[curSide] = 0;
+    }
+    ball._lastSide = curSide;
+
+    // Ground → point
+    if (!scoringLocked && ball.y+BALL_R > GROUND_Y) {
+      ball.y = GROUND_Y-BALL_R; ball.vx=0; ball.vy=0;
+      scoringLocked=true; rallyActive=false;
+      scorePoint(ball.x < NET_X ? 1 : 0);
+    }
+  }
+
+  players.forEach((p, idx) => {
+    p.vy += BASE_GRAVITY;
+    p.x  += p.vx;
+    p.y  += p.vy;
+    const minX = idx===0 ? PLAYER_W/2        : NET_X+PLAYER_W/2+6;
+    const maxX = idx===0 ? NET_X-PLAYER_W/2-6 : W-PLAYER_W/2;
+    // During serve, restrict server to back portion of their side — but only when on ground
+    const isServer = serveState==='waiting' && serving===idx;
+    const serveMaxX = idx===0 ? NET_X*0.45 : W-PLAYER_W/2;
+    const serveMinX = idx===0 ? PLAYER_W/2  : NET_X + (W-NET_X)*0.55;
+    if (p.x < minX) p.x = minX;
+    if (p.x > maxX) p.x = maxX;
+    if (p.y >= GROUND_Y) {
+      p.y=GROUND_Y; p.vy=0; p.onGround=true;
+      // Snap back to serve boundary on landing if still in serve phase
+      if (isServer) {
+        if (idx===0 && p.x > serveMaxX) p.x = serveMaxX;
+        if (idx===1 && p.x < serveMinX) p.x = serveMinX;
+      }
+    }
+    // Ball follows server while waiting to serve
+    if (isServer) {
+      ball.x = p.x;
+      ball.y = p.y - PLAYER_H - BALL_R - 4;
+    }
+    if (p.hitCooldown>0) p.hitCooldown--;
+    if (p.hitAnim>0)     p.hitAnim--;
+    else                 p.diving = false;
+    if (p.diveHitTimer > 0) {
+      p.diveHitTimer--;
+      if (p.diveHitTimer === 0) {
+        p.vx = 0;
+        tryHit(p, true);
+      }
+    }
+
+    // Passive ball contact — ball runs into player without a deliberate hit
+    if (serveState === 'live' && p.hitCooldown === 0) {
+      const bdy = ball.y - (p.y - PLAYER_H * 0.5);
+      const bdx = ball.x - p.x;
+      if (Math.abs(bdx) < PLAYER_W * 0.8 && Math.abs(bdy) < PLAYER_H * 0.7) {
+        const vxDir = p.id === 0 ? 1 : -1;
+        p.hitCooldown = 18;
+        p.hitAnim = 14;
+        if (!p.onGround) {
+          // In air — soft block: deflects up and slightly back, slow and floaty
+          ball.vx = -ball.vx * 0.4 + vxDir * 0.5;
+          ball.vy = -Math.abs(ball.vy) * 0.5 - 3;
+          p.lastHitType = 'set';
+          showFlash('🤚 Block!');
+        } else {
+          // On ground — body contact: pops straight up and back behind player
+          ball.vx = -vxDir * (1.5 + Math.random());
+          ball.vy = -9 - Math.random() * 2;
+          p.lastHitType = 'bump';
+          showFlash('😬 Body!');
+        }
+        ball.x = p.x + bdx * 1.1; // push ball out of overlap
+        lastTouched = p.id;
+        rallyHits++;
+        sideHits[p.id === 0 ? 0 : 1]++;
+        spawnParticles(ball.x, ball.y, p.color, 8);
+      }
+    }
+  });
+
+  particles.forEach(p => { p.x+=p.vx; p.y+=p.vy; p.vy+=0.12; p.life-=p.decay; });
+  particles = particles.filter(p => p.life>0);
+}
+
+// ── Input / AI (once per render frame) ────────────────────
+function handleInput() {
+  const spd = 5, jumpForce = -9;
+
+  players.forEach((p, idx) => {
+    const isAI = (idx===0&&p1AI)||(idx===1&&p2AI);
+
+    if (isAI) {
+      const mySide = idx===0 ? ball.x<NET_X : ball.x>NET_X;
+      // React whenever ball is moving toward my side (regardless of where it currently is)
+      const ballHeadingMySide = idx===0 ? ball.vx<0 : ball.vx>0;
+      // Also react if ball is high above the net and could be coming over
+      const ballOverNet = Math.abs(ball.x - NET_X) < 80 && ball.y < NET_TOP + 40;
+      const shouldReact = ballHeadingMySide || mySide || ballOverNet;
+
+      // ── Difficulty scaling ──────────────────────────────
+      const d = (aiDifficulty - 1) / 4;
+      const reactionRate = 0.3 + d * 0.7;
+      const posError = (1 - d) * 60;
+      const spikeChance = d * 0.9;
+      const spikeHeightThresh = GROUND_Y - NET_TOP * (0.4 + d * 0.35);
+
+      // Throttle AI reactions — use a per-player timer so it doesn't react every frame
+      if (!p.aiReactTimer || isNaN(p.aiReactTimer)) p.aiReactTimer = 0;
+      p.aiReactTimer--;
+
+      // Serve: walk to serve position, then launch
+      if (serveState==='waiting' && serving===idx) {
+        const serveX = idx===0 ? W*0.15 : W*0.85;
+        const diff = serveX - p.x;
+        if (Math.abs(diff) > 6) {
+          p.vx = diff > 0 ? 5 : -5;
+          p.facing = Math.sign(diff);
+        } else {
+          p.vx = 0;
+          launchServe(idx);
+        }
+        return;
+      }
+
+      // Non-server: move to ready/receive position during serve wait
+      if (serveState==='waiting' && serving!==idx) {
+        const readyX = idx===0 ? NET_X*0.5 : NET_X+(W-NET_X)*0.5;
+        const diff = readyX - p.x;
+        p.vx = Math.abs(diff) > 6 ? (diff > 0 ? 5 : -5) : 0;
+        if (p.vx !== 0) p.facing = Math.sign(p.vx);
+        p.aiReactTimer = -1; // ensure immediate reaction when serve goes live
+        return;
+      }
+      if (serveState==='live') {
+        if (shouldReact) {
+          // Only recalculate target when reaction timer fires
+          if (p.aiReactTimer <= 0) {
+            p.aiReactTimer = Math.round((1 - d) * 8);
+
+            // Predict where ball will be at hittable height (waist/chest level)
+            let px = ball.x, py = ball.y, pvx = ball.vx, pvy = ball.vy;
+            let targetX = ball.x;
+            for (let t = 0; t < 180; t++) {
+              pvy += BASE_GRAVITY * timeScale;
+              px += pvx * timeScale; py += pvy * timeScale;
+              // Stop when ball is at a hittable height for a standing player
+              if (py > p.y - PLAYER_H * 0.9) { targetX = px; break; }
+              // Fallback: ball reached ground — use that x
+              if (py >= GROUND_Y - BALL_R) { targetX = px; break; }
+              if (px < BALL_R || px > W - BALL_R) pvx *= -1;
+            }
+
+            // If predicted landing is on my side, always react regardless of current ball direction
+            const landingOnMySide = idx===0 ? targetX < NET_X : targetX > NET_X;
+            if (landingOnMySide) p.aiReactTimer = Math.min(p.aiReactTimer, 0);
+
+            const err = (Math.random() - 0.5) * posError * 2;
+            p.aiTargetX = targetX + err;
+
+            // Spike only viable if: ball above head, close to net, not a serve receive, difficulty chance
+            const distToNet = idx===0 ? NET_X - p.x : p.x - NET_X;
+            const ballAboveHead = ball.y < p.y - PLAYER_H - 20;
+            const closeEnoughToNet = distToNet < W * 0.28;
+            const notServeReceive = rallyHits > 0;
+            // In vertical mode, 2nd touch on this side = guaranteed spike attempt
+            const spikeOnVertical = verticalHitMode && sideHits[idx] === 1 && notServeReceive;
+            p.aiWantSpike = (spikeOnVertical || (ballAboveHead && closeEnoughToNet && notServeReceive)) && Math.random() < spikeChance;
+          }
+
+          // Only recalculate movement direction when react timer fires
+          if (p.aiReactTimer <= 0) {
+            const distToBall = Math.abs(ball.x - p.x);
+            // When close, track ball directly; when far use predicted landing
+            const target = distToBall < 120 ? ball.x : (p.aiTargetX || ball.x);
+            const diff = target - p.x;
+            p.vx = Math.abs(diff) > 4 ? (diff > 0 ? spd : -spd) : 0;
+            if (p.vx !== 0) p.facing = Math.sign(p.vx);
+          }
+
+          // For vertical follow-up spike, bypass reaction gating — move directly to ball
+          const awaitingVerticalSpike = verticalHitMode && sideHits[idx] === 1 && rallyHits > 0;
+          if (awaitingVerticalSpike) {
+            // Target is ~100px from net where the ball will come down
+            const spikeTarget = idx===0 ? NET_X - 50 : NET_X + 50;
+            const diff = spikeTarget - p.x;
+            p.vx = Math.abs(diff) > 4 ? (diff > 0 ? spd : -spd) : 0;
+            if (p.vx !== 0) p.facing = Math.sign(p.vx);
+            // Jump as soon as at position and ball is near peak
+            if (p.onGround && Math.abs(p.x - spikeTarget) < 35 && ball.vy < 2) {
+              p.vy = jumpForce;
+              p.onGround = false;
+            }
+          } else if (p.aiWantSpike && p.onGround && Math.abs(p.x - ball.x) < 30) {
+            // Regular spike jump
+            p.vy = jumpForce;
+            p.onGround = false;
+          }
+
+          // Hit when ball is realistically reachable — CONTACT_R=52, plus a frame or two of travel
+          if (p.hitCooldown <= 0 && Math.hypot(ball.x-p.x, ball.y-(p.y-PLAYER_H*0.5)) < 90) {
+            tryHit(p);
+          }
+
+        } else {
+          // Ball on opponent's side — drift home
+          const homeX = idx===0 ? NET_X*0.5 : NET_X+(W-NET_X)*0.5;
+          const diff = homeX - p.x;
+          p.vx = Math.abs(diff)>4 ? (diff>0?spd:-spd) : 0;
+        }
+      }
+    } else if (idx===0) {
+      if      (keys['a']||keys['A']) { p.vx=-spd; p.facing=-1; p.lastVx=-spd; }
+      else if (keys['d']||keys['D']) { p.vx= spd; p.facing= 1; p.lastVx= spd; }
+      else if (p.onGround) { p.vx = 0; p.lastVx = (p.lastVx||0) * 0.82; }
+      // In air with no key: preserve vx (momentum), but slow slightly
+      else { p.vx *= 0.97; p.lastVx = (p.lastVx||0) * 0.92; }
+      if ((keys['w']||keys['W'])&&p.onGround) { p.vy=jumpForce; p.onGround=false; keys['w']=false; keys['W']=false; }
+      if (keys['s']||keys['S']) {
+        if (serveState==='waiting'&&serving===0) {
+          launchServe(0);
+        } else if (serveState==='live'&&p.hitCooldown<=0) {
+          tryHit(p);
+        }
+      }
+    } else {
+      if      (keys['ArrowLeft'])  { p.vx=-spd; p.facing=-1; }
+      else if (keys['ArrowRight']) { p.vx= spd; p.facing= 1; }
+      else if (p.onGround) { p.vx = 0; }
+      else { p.vx *= 0.97; }
+      if (keys['ArrowUp']&&p.onGround) { p.vy=jumpForce; p.onGround=false; }
+      if (keys['ArrowDown']) {
+        if (serveState==='waiting'&&serving===1) launchServe(1);
+        else if (serveState==='live'&&p.hitCooldown<=0) tryHit(p);
+      }
+    }
+  });
+}
+
+function tryHit(p, fromDive) {
+  if (serveState!=='live') return;
+
+  // Tick ball forward up to 8 steps to find real contact point
+  // Divers get a larger reach and longer lookahead — they've committed their body
+  const CONTACT_R = fromDive ? 90 : 75;
+  const MAX_TICKS = fromDive ? 24 : 12;
+  let contacted = false;
+  let bx = ball.x, by = ball.y, bvx = ball.vx, bvy = ball.vy;
+
+  // Check current position first
+  if (Math.hypot(bx - p.x, by - (p.y - PLAYER_H * 0.5)) <= CONTACT_R) {
+    contacted = true;
+  } else {
+    for (let t = 1; t <= MAX_TICKS; t++) {
+      bvy += BASE_GRAVITY;
+      bx += bvx; by += bvy;
+      if (Math.hypot(bx - p.x, by - (p.y - PLAYER_H * 0.5)) <= CONTACT_R) {
+        contacted = true;
+        break;
+      }
+    }
+  }
+
+  const dx = bx - p.x;
+  const dy = by - (p.y - PLAYER_H * 0.5);
+  const dist = Math.hypot(dx, dy);
+
+  const inAir        = !p.onGround;
+  const ballAboveHead = by < p.y - PLAYER_H;
+  const ballHigh      = by < p.y - PLAYER_H * 0.6;
+  const vxDir        = p.id===0 ? 1 : -1;
+  const canSpike     = inAir && rallyHits > 0;
+  const side         = p.id === 0 ? 0 : 1;
+  const nextHitOnSide = sideHits[side] + 1;
+  const doVertical   = verticalHitMode && nextHitOnSide === 1 && rallyHits > 1 && !canSpike;
+
+  // Determine pose
+  let poseType;
+  if (canSpike)           poseType = 'spike';
+  else if (doVertical)    poseType = 'set';
+  else if (ballAboveHead) poseType = 'set';
+  else if (ballHigh)      poseType = 'set';
+  else                    poseType = 'bump';
+
+  // Out of range — launch dive (only from ground)
+  if (!contacted && !fromDive && p.onGround) {
+    p.lastHitType = 'bump';
+    p.diving = true;
+    p.diveDir = dx > 0 ? 1 : -1;
+
+    let px = ball.x, py = ball.y, pvx = ball.vx, pvy = ball.vy;
+    let landX = ball.x;
+    for (let t = 0; t < 120; t++) {
+      pvy += BASE_GRAVITY;
+      px += pvx; py += pvy;
+      if (py >= GROUND_Y - 30) { landX = px; break; }
+      if (px < BALL_R || px > W - BALL_R) pvx *= -1;
+    }
+    const minX = p.id === 0 ? PLAYER_W/2 : NET_X + PLAYER_W/2 + 6;
+    const maxX = p.id === 0 ? NET_X - PLAYER_W/2 - 6 : W - PLAYER_W/2;
+    landX = Math.max(minX, Math.min(maxX, landX));
+    const diveDx = landX - p.x;
+    const diveFrames = Math.max(18, Math.min(30, Math.abs(diveDx) / 6));
+    p.vx = diveDx / diveFrames;
+    p.facing = p.diveDir;
+    p.hitAnim = Math.round(diveFrames) + 4;
+    p.hitCooldown = Math.round(diveFrames) + 4;
+    p.diveHitTimer = Math.round(diveFrames);
+    return;
+  }
+
+  if (!contacted && fromDive) {
+    // Arrived but still no contact — just whiff silently
+    p.diving = false;
+    return;
+  }
+
+  // Advance ball to contact position
+  ball.x = bx; ball.y = by; ball.vx = bvx; ball.vy = bvy;
+
+  p.hitCooldown = 12; p.hitAnim = 14;
+  p.lastHitType = poseType;
+  if (fromDive) p.diving = false;
+  if (poseType === 'bump' && Math.abs(dx) > 65 && !fromDive) {
+    p.diving = true;
+    p.diveDir = dx > 0 ? 1 : -1;
+  }
+
+  rallyHits++;
+  sideHits[side]++;
+
+  if (doVertical) {
+    const targetX = p.id===0 ? NET_X - 50 : NET_X + 50;
+    const airTime = (2 * 9) / BASE_GRAVITY;
+    ball.vx = (targetX - ball.x) / airTime;
+    ball.vy = -9; ball.spin = 0;
+    showFlash('⬆ Up!');
+    spawnParticles(ball.x, ball.y, p.color, 10);
+  } else if (canSpike) {
+    ball.vx = vxDir*(7+Math.abs(dx)*0.07) + (p.lastVx||0)*0.3;
+    ball.vy = 3.5+Math.random()*1.5;
+    ball.spin = vxDir*0.8;
+    showFlash('💥 SPIKE!');
+    spawnParticles(ball.x, ball.y, p.color, 20);
+  } else if (ballAboveHead || ballHigh || inAir) {
+    ball.vx = vxDir * (1.5 + Math.random() * 1.5) + (p.lastVx||0)*0.25;
+    ball.vy = -10; ball.spin = vxDir * 0.2;
+    showFlash('🖐 Set!');
+    spawnParticles(ball.x, ball.y, p.color, 10);
+  } else {
+    ball.vx = vxDir*(4+Math.random()*1.5) + (p.lastVx||0)*0.35;
+    ball.vy = -11; ball.spin = 0;
+    showFlash('🤜 Bump!');
+    spawnParticles(ball.x, ball.y, p.color, 10);
+  }
+
+  if      (rallyHits===5)  showFlash('🔥 Heating Up!');
+  else if (rallyHits===10) showFlash('⚡ On Fire!');
+  else if (rallyHits===15) showFlash('🌪 TURBO!');
+
+  lastTouched = p.id;
+}
+
+function scorePoint(scorer) {
+  scores[scorer]++;
+  updateScoreDisplay();
+  spawnParticles(ball.x, ball.y, scorer===0?P1_COLOR:P2_COLOR, 40);
+  const WIN=7;
+  if (scores[scorer]>=WIN) {
+    showFlash(`P${scorer+1} WINS! 🏆`);
+    setTimeout(()=>{ scores=[0,0]; updateScoreDisplay(); beginServePhase(scorer); }, 3000);
+  } else {
+    showFlash(`Point P${scorer+1}!`);
+    setTimeout(()=>beginServePhase(scorer), 1800);
+  }
+}
+
+function updateScoreDisplay() {
+  document.getElementById('p1score').textContent = scores[0];
+  document.getElementById('p2score').textContent = scores[1];
+  const ms1 = document.getElementById('ms-p1');
+  const ms2 = document.getElementById('ms-p2');
+  if (ms1) ms1.textContent = scores[0];
+  if (ms2) ms2.textContent = scores[1];
+}
+
+function spawnParticles(x, y, color, count) {
+  for (let i=0;i<count;i++) {
+    const a=Math.random()*Math.PI*2, s=1.5+Math.random()*4;
+    particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-1.5,life:1,decay:0.022+Math.random()*0.03,size:2+Math.random()*4,color});
+  }
+}
+
+function showFlash(text) { flashMsg.text=text; flashMsg.timer=70; }
+
+// ── Drawing ────────────────────────────────────────────────
+let skyGrad;
+function drawBackground() {
+  if (!skyGrad) {
+    skyGrad = ctx.createLinearGradient(0,0,0,GROUND_Y);
+    skyGrad.addColorStop(0,'#0d1b3e'); skyGrad.addColorStop(0.6,'#1a3a6e'); skyGrad.addColorStop(1,'#2d6a8f');
+  }
+  ctx.fillStyle=skyGrad; ctx.fillRect(0,0,W,GROUND_Y);
+  ctx.fillStyle='rgba(255,255,255,0.55)';
+  [[50,30],[120,15],[200,45],[350,20],[500,10],[650,35],[780,25],[850,50],[100,70],[420,60],[710,55]]
+    .forEach(([sx,sy])=>{ ctx.beginPath(); ctx.arc(sx,sy,1.5,0,Math.PI*2); ctx.fill(); });
+  ctx.fillStyle='#ffe9a0'; ctx.shadowColor='#ffe66d'; ctx.shadowBlur=20;
+  ctx.beginPath(); ctx.arc(820,60,22,0,Math.PI*2); ctx.fill(); ctx.shadowBlur=0;
+  const sg=ctx.createLinearGradient(0,GROUND_Y,0,H);
+  sg.addColorStop(0,'#d4a04a'); sg.addColorStop(1,'#a0702a');
+  ctx.fillStyle=sg; ctx.fillRect(0,GROUND_Y,W,H-GROUND_Y);
+  ctx.strokeStyle='rgba(180,130,60,0.3)'; ctx.lineWidth=1;
+  for(let i=0;i<8;i++){const y=GROUND_Y+8+i*7; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke();}
+  ctx.strokeStyle='rgba(255,255,255,0.3)'; ctx.lineWidth=2; ctx.setLineDash([]);
+  ctx.beginPath(); ctx.moveTo(40,GROUND_Y); ctx.lineTo(W-40,GROUND_Y); ctx.stroke();
+}
+
+function drawNet() {
+  ctx.fillStyle='#bbbbbb'; ctx.shadowColor='#aaa'; ctx.shadowBlur=4;
+  ctx.fillRect(NET_X-4,NET_TOP-10,8,NET_H+10); ctx.shadowBlur=0;
+  const netW=14, rows=8, cols=12;
+  ctx.strokeStyle='rgba(255,255,255,0.8)'; ctx.lineWidth=1;
+  for(let r=0;r<=rows;r++){
+    ctx.beginPath(); ctx.moveTo(NET_X-netW,NET_TOP+r*NET_H/rows); ctx.lineTo(NET_X+netW,NET_TOP+r*NET_H/rows); ctx.stroke();
+  }
+  for(let c=0;c<=cols;c++){
+    const nx=NET_X-netW+c*netW*2/cols;
+    ctx.beginPath(); ctx.moveTo(nx,NET_TOP); ctx.lineTo(nx,NET_TOP+NET_H); ctx.stroke();
+  }
+  ctx.fillStyle='#fff'; ctx.fillRect(NET_X-netW-2,NET_TOP-5,netW*2+4,6);
+  ctx.fillStyle='#e63946';
+  ctx.fillRect(NET_X-netW-2,NET_TOP-5,6,6);
+  ctx.fillRect(NET_X+netW-4,NET_TOP-5,6,6);
+}
+
+function drawPlayer(p) {
+  ctx.save();
+
+  const isDiving = p.diving && p.lastHitType === 'bump';
+  if (isDiving) {
+    const diveDir = p.diveDir || p.facing;
+    ctx.translate(p.x + diveDir * 10, p.y - 10);
+    ctx.rotate(diveDir * Math.PI * 0.38);
+  } else {
+    ctx.translate(p.x, p.y);
+  }
+
+  const f   = p.facing, c = p.color;
+  const t   = p.hitAnim / 14; // 1→0 as animation plays out
+  const inAir = !p.onGround;
+  const tick  = Date.now();
+
+  // Shadow
+  if (p.onGround && !isDiving) {
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.beginPath(); ctx.ellipse(0, 2, 18, 4, 0, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // Pose selection — includes 'trans_*' mid-wind-up poses
+  let pose = 'idle';
+  if (isDiving)     pose = 'dive';
+  else if (t > 0) {
+    const base = p.lastHitType || 'bump';
+    // t > 0.6 = wind-up/transition, t <= 0.6 = follow-through
+    pose = (t > 0.6) ? 'trans_' + base : base;
+  }
+  else if (inAir)   pose = 'jump';
+  else if (p.vx !== 0) {
+    const movingTowardNet = (p.id === 0 && p.vx > 0) || (p.id === 1 && p.vx < 0);
+    pose = movingTowardNet ? 'run' : 'shuffle';
+  }
+
+  const legSwing  = Math.sin(tick * 0.015) * 12;
+  const hips      = -30;
+  const shoulders = -62;
+  const headY     = -78;
+
+  ctx.strokeStyle = c; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+
+  // ── LEGS ──
+  ctx.lineWidth = 5;
+
+  if (pose === 'run') {
+    // Ref #2: mid-stride, one knee driving forward
+    ctx.beginPath(); ctx.moveTo(0,hips); ctx.lineTo(f*-10+legSwing,hips+16); ctx.lineTo(f*-6+legSwing*0.5,0); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,hips); ctx.lineTo(f*10-legSwing,hips+16); ctx.lineTo(f*8-legSwing*0.5,0); ctx.stroke();
+  } else if (pose === 'shuffle') {
+    const bounce = Math.abs(Math.sin(tick * 0.02)) * 4;
+    ctx.beginPath(); ctx.moveTo(0,hips+bounce); ctx.lineTo(-14,hips+16+bounce); ctx.lineTo(-12,0); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,hips+bounce); ctx.lineTo( 14,hips+16+bounce); ctx.lineTo( 12,0); ctx.stroke();
+
+  // ── JUMP (Ref #5: legs bent back behind body, arms wide for balance) ──
+  } else if (pose === 'jump') {
+    // Legs kick back and up behind hips — knees bend upward
+    ctx.beginPath(); ctx.moveTo(0,hips); ctx.lineTo(-f*10,hips-6); ctx.lineTo(-f*6,hips+8); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,hips); ctx.lineTo( f*10,hips-8); ctx.lineTo( f*4, hips+10); ctx.stroke();
+  } else if (pose === 'trans_spike') {
+    // Approach jump: one knee driving up high, other trailing
+    ctx.beginPath(); ctx.moveTo(0,hips); ctx.lineTo(f*-8,hips+6); ctx.lineTo(f*-16,hips+2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,hips); ctx.lineTo(f*8,hips+14); ctx.lineTo(f*14,hips+22); ctx.stroke();
+
+  // ── SPIKE (Ref #3: full extension, one leg forward, one bent back) ──
+  } else if (pose === 'spike') {
+    ctx.beginPath(); ctx.moveTo(0,hips); ctx.lineTo(f*-14,hips+10); ctx.lineTo(f*-10,hips+24); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,hips); ctx.lineTo(f*10,hips+8);   ctx.lineTo(f*16,hips+2);   ctx.stroke();
+
+  // ── SET wind-up: rising onto toes, hands lifting ──
+  } else if (pose === 'trans_set') {
+    ctx.beginPath(); ctx.moveTo(0,hips); ctx.lineTo(-6,hips+14); ctx.lineTo(-4,-4); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,hips); ctx.lineTo( 6,hips+14); ctx.lineTo( 4,-4); ctx.stroke();
+
+  // ── SET (Ref #1: standing tall, slight rise on toes) ──
+  } else if (pose === 'set') {
+    ctx.beginPath(); ctx.moveTo(0,hips); ctx.lineTo(-5,hips+16); ctx.lineTo(-4,-2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,hips); ctx.lineTo( 5,hips+16); ctx.lineTo( 4,-2); ctx.stroke();
+
+  // ── BUMP wind-up: dropping into squat, arms swinging back ──
+  } else if (pose === 'trans_bump') {
+    ctx.beginPath(); ctx.moveTo(0,hips+4); ctx.lineTo(-10,hips+18); ctx.lineTo(-8,0); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,hips+4); ctx.lineTo( 10,hips+18); ctx.lineTo( 8,0); ctx.stroke();
+
+  // ── BUMP / DIVE (Ref #4: deep squat, knees out, weight forward) ──
+  } else if (pose === 'bump' || pose === 'dive' || pose === 'trans_dive') {
+    ctx.beginPath(); ctx.moveTo(0,hips); ctx.lineTo(f*-16,hips+12); ctx.lineTo(f*-10,0); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,hips); ctx.lineTo(f*12, hips+14); ctx.lineTo(f*8,  0); ctx.stroke();
+  } else {
+    // Idle
+    ctx.beginPath(); ctx.moveTo(0,hips); ctx.lineTo(-5,hips+16); ctx.lineTo(-5,0); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,hips); ctx.lineTo( 5,hips+16); ctx.lineTo( 5,0); ctx.stroke();
+  }
+
+  // ── TORSO ──
+  ctx.lineWidth = 8;
+  if (pose === 'spike') {
+    // Arched back, coiled — ref silhouette shows strong forward lean
+    ctx.beginPath(); ctx.moveTo(0,hips); ctx.quadraticCurveTo(f*8,hips-16, f*6,shoulders-4); ctx.stroke();
+  } else if (pose === 'trans_spike') {
+    ctx.beginPath(); ctx.moveTo(0,hips); ctx.lineTo(f*4,shoulders-2); ctx.stroke();
+  } else if (pose === 'bump' || pose === 'dive' || pose === 'trans_dive') {
+    // Leaning aggressively forward and low
+    ctx.beginPath(); ctx.moveTo(0,hips); ctx.lineTo(f*-10,shoulders+8); ctx.stroke();
+  } else if (pose === 'trans_bump') {
+    ctx.beginPath(); ctx.moveTo(0,hips+2); ctx.lineTo(f*-4,shoulders+4); ctx.stroke();
+  } else if (pose === 'set' || pose === 'trans_set') {
+    // Tall, upright, slight forward lean
+    ctx.beginPath(); ctx.moveTo(0,hips); ctx.lineTo(f*2,shoulders); ctx.stroke();
+  } else if (pose === 'run') {
+    ctx.beginPath(); ctx.moveTo(0,hips); ctx.lineTo(f*6,shoulders+2); ctx.stroke();
+  } else {
+    ctx.beginPath(); ctx.moveTo(0,hips); ctx.lineTo(0,shoulders); ctx.stroke();
+  }
+
+  // ── ARMS ──
+  ctx.lineWidth = 4;
+
+  if (pose === 'jump') {
+    // Ref #5: arms spread wide to sides, angled slightly down — airborne balance
+    ctx.beginPath(); ctx.moveTo(0,shoulders); ctx.lineTo( f*16,shoulders+4);  ctx.lineTo( f*28,shoulders+2);  ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,shoulders); ctx.lineTo(-f*14,shoulders+6);  ctx.lineTo(-f*26,shoulders+4);  ctx.stroke();
+
+  } else if (pose === 'trans_spike') {
+    // Arm cocking back above head, other arm pointing at ball (ref #2 approach)
+    ctx.beginPath(); ctx.moveTo(0,shoulders); ctx.lineTo(f*14,shoulders-8);  ctx.lineTo(f*18,shoulders-22); ctx.stroke(); // point at ball
+    ctx.beginPath(); ctx.moveTo(0,shoulders); ctx.lineTo(-f*12,shoulders-6); ctx.lineTo(-f*10,shoulders-20); ctx.stroke(); // cock back
+
+  } else if (pose === 'spike') {
+    // Ref #3: hitting arm fully extended overhead, wrist snapping through — other arm sweeps down
+    ctx.beginPath(); ctx.moveTo(0,shoulders); ctx.lineTo(f*10,shoulders-10); ctx.lineTo(f*16,shoulders-26); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,shoulders); ctx.lineTo(-f*14,shoulders+4); ctx.lineTo(-f*18,shoulders+20); ctx.stroke();
+
+  } else if (pose === 'trans_set') {
+    // Hands lifting up to forehead, elbows out
+    ctx.beginPath(); ctx.moveTo(0,shoulders); ctx.lineTo(-10,shoulders-4); ctx.lineTo(-8,headY+10); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,shoulders); ctx.lineTo( 10,shoulders-4); ctx.lineTo( 8,headY+10); ctx.stroke();
+
+  } else if (pose === 'set') {
+    // Ref #1: both arms up forming triangle above head, wrists cocked to contact ball
+    ctx.beginPath(); ctx.moveTo(0,shoulders); ctx.lineTo(-10,shoulders-10); ctx.lineTo(-6,headY+2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,shoulders); ctx.lineTo( 10,shoulders-10); ctx.lineTo( 6,headY+2); ctx.stroke();
+
+  } else if (pose === 'trans_bump') {
+    // Arms swinging back and down before platform
+    ctx.beginPath(); ctx.moveTo(0,shoulders); ctx.lineTo(-f*12,shoulders+4);  ctx.lineTo(-f*16,shoulders+18); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,shoulders); ctx.lineTo(-f*8, shoulders+6);  ctx.lineTo(-f*14,shoulders+20); ctx.stroke();
+
+  } else if (pose === 'bump' || pose === 'dive' || pose === 'trans_dive') {
+    // Ref #4: arms locked together as platform, angled forward and slightly down
+    ctx.beginPath(); ctx.moveTo(0,shoulders); ctx.lineTo(f*12,shoulders+6);  ctx.lineTo(f*22,shoulders+20); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,shoulders); ctx.lineTo(f*8, shoulders+8);  ctx.lineTo(f*20,shoulders+22); ctx.stroke();
+
+  } else if (pose === 'run') {
+    ctx.beginPath(); ctx.moveTo(0,shoulders); ctx.lineTo(-12,shoulders+8+legSwing*0.4); ctx.lineTo(-10,shoulders+20+legSwing*0.2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,shoulders); ctx.lineTo( 12,shoulders+8-legSwing*0.4); ctx.lineTo( 10,shoulders+20-legSwing*0.2); ctx.stroke();
+  } else if (pose === 'shuffle') {
+    ctx.beginPath(); ctx.moveTo(0,shoulders); ctx.lineTo(-16,shoulders+12); ctx.lineTo(-18,shoulders+22); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,shoulders); ctx.lineTo( 16,shoulders+12); ctx.lineTo( 18,shoulders+22); ctx.stroke();
+  } else {
+    // Idle: arms relaxed at sides
+    ctx.beginPath(); ctx.moveTo(0,shoulders); ctx.lineTo(-12,shoulders+12); ctx.lineTo(-10,shoulders+24); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,shoulders); ctx.lineTo( 12,shoulders+12); ctx.lineTo( 10,shoulders+24); ctx.stroke();
+  }
+
+  // ── HEAD ──
+  ctx.fillStyle = c; ctx.shadowColor = c; ctx.shadowBlur = 12;
+  ctx.beginPath(); ctx.ellipse(0, headY, 10, 12, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#0a0a1a';
+  ctx.beginPath(); ctx.arc(f * 5, headY - 2, 2.5, 0, Math.PI * 2); ctx.fill();
+
+  // Jersey number
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  ctx.font = 'bold 9px Rajdhani'; ctx.textAlign = 'center';
+  ctx.fillText(p.id + 1, 0, shoulders + 14);
+
+  ctx.restore();
+}
+
+function drawBall() {
+  ball.trail.forEach((pt,i)=>{
+    if(i===0)return;
+    const r=Math.max(0.5,BALL_R*(i/ball.trail.length));
+    ctx.fillStyle=`rgba(255,230,100,${(i/ball.trail.length)*0.28})`;
+    ctx.beginPath(); ctx.arc(pt.x,pt.y,r,0,Math.PI*2); ctx.fill();
+  });
+  ctx.save(); ctx.translate(ball.x,ball.y); ctx.rotate(ball.spin);
+  ctx.shadowColor='#ffe66d'; ctx.shadowBlur=20;
+  const bg=ctx.createRadialGradient(-4,-4,2,0,0,BALL_R);
+  bg.addColorStop(0,'#fffde7'); bg.addColorStop(0.5,'#ffe082'); bg.addColorStop(1,'#ff8f00');
+  ctx.fillStyle=bg; ctx.beginPath(); ctx.arc(0,0,BALL_R,0,Math.PI*2); ctx.fill();
+  ctx.shadowBlur=0;
+  ctx.strokeStyle='rgba(180,100,0,0.55)'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.arc(0,0,BALL_R,0,Math.PI*2); ctx.stroke();
+  ctx.beginPath(); ctx.arc(0,0,BALL_R,-0.5,0.5+Math.PI); ctx.stroke();
+  ctx.beginPath(); ctx.arc(4,0,BALL_R-2,Math.PI*0.3,Math.PI*1.3); ctx.stroke();
+  ctx.restore();
+}
+
+function drawParticles() {
+  particles.forEach(p=>{
+    ctx.globalAlpha=Math.max(0,p.life);
+    ctx.fillStyle=p.color; ctx.shadowColor=p.color; ctx.shadowBlur=5;
+    ctx.beginPath(); ctx.arc(p.x,p.y,Math.max(0.1,p.size*p.life),0,Math.PI*2); ctx.fill();
+  });
+  ctx.globalAlpha=1; ctx.shadowBlur=0;
+}
+
+function drawServePrompt() {
+  if (serveState!=='waiting') return;
+  const isAIServing=(serving===0&&p1AI)||(serving===1&&p2AI);
+  const key=serving===0?'S':'↓';
+  const label=isAIServing?`P${serving+1} (CPU) serving…`:`P${serving+1} — Press [${key}] to Serve`;
+  const pulse=0.5+0.5*Math.sin(Date.now()*0.006);
+  ctx.save(); ctx.globalAlpha=0.35+0.25*pulse;
+  ctx.fillStyle=players[serving].color; ctx.shadowColor=players[serving].color; ctx.shadowBlur=18+12*pulse;
+  ctx.beginPath(); ctx.arc(ball.x,ball.y,BALL_R+6,0,Math.PI*2); ctx.fill(); ctx.restore();
+  ctx.save(); ctx.globalAlpha=0.72+0.28*pulse;
+  ctx.font='bold 18px Bebas Neue'; ctx.textAlign='center';
+  ctx.fillStyle='#fff'; ctx.shadowColor=players[serving].color; ctx.shadowBlur=14;
+  ctx.fillText(label, W/2, NET_TOP-18); ctx.restore();
+}
+
+function drawFlash() {
+  if (flashMsg.timer<=0) return;
+  const alpha=Math.min(1,flashMsg.timer/20);
+  ctx.save(); ctx.globalAlpha=alpha;
+  ctx.font=`bold ${flashMsg.timer>35?42:38}px Bebas Neue`; ctx.textAlign='center';
+  ctx.fillStyle='#fff'; ctx.shadowColor='#ff6b35'; ctx.shadowBlur=30;
+  ctx.fillText(flashMsg.text, W/2, H/2-40); ctx.restore();
+  flashMsg.timer--;
+}
+
+function drawHUD() {
+  players.forEach((p,i)=>{
+    const isAI=(i===0&&p1AI)||(i===1&&p2AI);
+    ctx.fillStyle=p.color; ctx.font='600 13px Rajdhani'; ctx.textAlign='center';
+    ctx.fillText(isAI?'CPU':`P${i+1}`, p.x, p.y-PLAYER_H-12);
+  });
+  if (rallyHits>0&&serveState==='live') {
+    const pct=Math.min(1,(rallyHits-1)*0.06/1.2);
+    const g=Math.round(255*(1-pct)), b=Math.round(50*(1-pct));
+    const col=`rgb(255,${g},${b})`;
+    const lbl=rallyHits>=15?`🌪 ${rallyHits} TURBO`:rallyHits>=10?`⚡ ${rallyHits} ON FIRE`:rallyHits>=5?`🔥 ${rallyHits} hits`:`${rallyHits} hit${rallyHits>1?'s':''}`;
+    ctx.save(); ctx.textAlign='center'; ctx.font='bold 13px Rajdhani';
+    ctx.fillStyle=col; ctx.shadowColor=col; ctx.shadowBlur=pct>0.4?12:0;
+    ctx.fillText(lbl, W/2, NET_TOP-38); ctx.restore();
+  }
+  ctx.save(); ctx.textAlign='right'; ctx.font='11px Rajdhani'; ctx.fillStyle='#333';
+  ctx.fillText(`${Math.round(timeScale*100)}% speed`, W-6, H-5); ctx.restore();
+}
+
+// ── Mobile Touch Controls ──────────────────────────────────
+(function() {
+  // Auto-check P2 CPU on mobile
+  if ('ontouchstart' in window || window.innerWidth <= 960) {
+    const ai2 = document.getElementById('aiP2');
+    if (ai2) ai2.checked = true;
+  }
+
+  function bindBtn(id, keyOn) {
+    const el = document.getElementById(id);
+    if (!el) return;
+
+    function press(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      keys[keyOn] = true;
+      el.classList.add('active');
+    }
+    function release(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      // For hit+jump: latch true for one full game loop tick, then clear
+      // For move keys: clear immediately on release
+      if (keyOn === 's' || keyOn === 'w') {
+        // keep key set — handleInput will consume it
+      } else {
+        keys[keyOn] = false;
+      }
+      el.classList.remove('active');
+    }
+
+    el.addEventListener('touchstart',  press,   { passive: false });
+    el.addEventListener('touchend',    release, { passive: false });
+    el.addEventListener('touchcancel', release, { passive: false });
+    el.addEventListener('mousedown',  press);
+    el.addEventListener('mouseup',    release);
+    el.addEventListener('mouseleave', release);
+  }
+
+  // Left thumb: move left, jump, move right
+  bindBtn('btn-left',  'a');
+  bindBtn('btn-jump',  'w');
+  bindBtn('btn-right', 'd');
+  // Right thumb: hit / serve
+  bindBtn('btn-hit',   's');
+
+  // ── Canvas swipe/tap gestures ──────────────────────────────
+  // Swipe left/right = move, swipe up = jump, swipe down = spike, tap = hit
+  const SWIPE_DIST = 30;  // px to count as swipe
+  let swipeStart = null;
+  let moveKey = null;     // currently held move direction from swipe
+
+  function clearMove() {
+    if (moveKey) { keys[moveKey] = false; moveKey = null; }
+  }
+
+  document.addEventListener('touchstart', e => {
+    if (!gameRunning || paused) return;
+    // Ignore touches on the actual buttons
+    if (e.target.classList.contains('touch-btn')) return;
+    e.preventDefault();
+    const t = e.changedTouches[0];
+    swipeStart = { x: t.clientX, y: t.clientY, time: Date.now() };
+    clearMove();
+  }, { passive: false });
+
+  document.addEventListener('touchmove', e => {
+    if (!gameRunning || paused || !swipeStart) return;
+    if (e.target.classList.contains('touch-btn')) return;
+    e.preventDefault();
+    const t = e.changedTouches[0];
+    const dx = t.clientX - swipeStart.x;
+    const dy = t.clientY - swipeStart.y;
+    const adx = Math.abs(dx), ady = Math.abs(dy);
+
+    if (adx > SWIPE_DIST || ady > SWIPE_DIST) {
+      if (adx > ady && adx > SWIPE_DIST) {
+        const dir = dx > 0 ? 'd' : 'a';
+        if (dir !== moveKey) {
+          clearMove();
+          moveKey = dir;
+          keys[moveKey] = true;
+        }
+      }
+    }
+  }, { passive: false });
+
+  document.addEventListener('touchend', e => {
+    if (!gameRunning || paused || !swipeStart) return;
+    if (e.target.classList.contains('touch-btn')) return;
+    e.preventDefault();
+    const t = e.changedTouches[0];
+    const dx = t.clientX - swipeStart.x;
+    const dy = t.clientY - swipeStart.y;
+    const adx = Math.abs(dx), ady = Math.abs(dy);
+    const elapsed = Date.now() - swipeStart.time;
+    // Generous tap tolerance — finger moves a bit on phone screens
+    const isTap = adx < 22 && ady < 22 && elapsed < 350;
+
+    if (isTap) {
+      clearMove();
+      keys['s'] = true;
+    } else if (dy < -50) {
+      clearMove();
+      keys['w'] = true;
+      if (Math.abs(dx) > SWIPE_DIST * 0.5) {
+        const dir = dx > 0 ? 'd' : 'a';
+        keys[dir] = true;
+        setTimeout(() => { keys[dir] = false; }, 180);
+      }
+    } else if (dy > SWIPE_DIST && adx < ady) {
+      clearMove();
+      keys['w'] = true;
+      setTimeout(() => { keys['s'] = true; }, 40);
+    } else {
+      clearMove();
+    }
+    swipeStart = null;
+  }, { passive: false });
+
+  document.addEventListener('touchcancel', e => {
+    clearMove();
+    swipeStart = null;
+  }, { passive: false });
+  const _origHandleInput = handleInput;
+  handleInput = function() {
+    _origHandleInput();
+    // Jump is one-shot — clear immediately after processing
+    if (keys['w']) keys['w'] = false;
+    // Hit key: keep set for up to 8 frames so it fires even if hitCooldown
+    // was briefly blocking. Once tryHit fires it resets hitCooldown so
+    // subsequent frames won't re-fire (hitCooldown>0 guard in tryHit).
+    if (keys['s']) {
+      keys['_sTTL'] = (keys['_sTTL'] || 0) + 1;
+      if (keys['_sTTL'] > 8) { keys['s'] = false; keys['_sTTL'] = 0; }
+    } else {
+      keys['_sTTL'] = 0;
+    }
+  };
+})();
+
+let lastTime = 0;
+let physAccum = 0;
+const STEP_MS = 1000/60;
+
+function loop(timestamp) {
+  if (!gameRunning || paused) return;
+  lastTime = timestamp||0;
+
+  handleInput();
+  physicsStep();
+
+  ctx.clearRect(0,0,W,H);
+  drawBackground();
+  drawNet();
+  drawParticles();
+  players.forEach(p=>drawPlayer(p));
+  drawBall();
+  drawServePrompt();
+  drawFlash();
+  drawHUD();
+
+  const delay = (1 - timeScale) * 50;
+  if (delay > 4) {
+    setTimeout(() => requestAnimationFrame(loop), delay);
+  } else {
+    requestAnimationFrame(loop);
+  }
+}
+</script>
+</body>
+</html>
