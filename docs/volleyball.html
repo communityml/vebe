@@ -224,7 +224,7 @@
     <p class="mobile-hide"><kbd>A</kbd><kbd>D</kbd> Move &nbsp;|&nbsp; <kbd>W</kbd> Jump &nbsp;|&nbsp; <kbd>S</kbd> Hit / Serve</p>
     <p class="mobile-hide" style="margin-top:5px"><kbd>←</kbd><kbd>→</kbd> Move &nbsp;|&nbsp; <kbd>↑</kbd> Jump &nbsp;|&nbsp; <kbd>↓</kbd> Hit / Serve</p>
     <p class="mobile-hide" style="margin-top:8px; color:#555; font-size:0.8rem"><kbd>Esc</kbd> or <kbd>P</kbd> to pause</p>
-    <p style="margin-top:4px; color:#555; font-size:0.8rem">First to 7 points wins</p>
+    <p style="margin-top:4px; color:#555; font-size:0.8rem">First to 7, win by 2</p>
     <p class="mobile-only" style="margin-top:6px; color:#888; font-size:0.78rem">◀ ▲ ▶ to move &amp; jump · HIT to hit</p>
 
     <div class="ai-row">
@@ -314,6 +314,8 @@ let verticalHitMode = false;
 // Tracks hits on the current side possession: reset when ball crosses net
 // sideHits[0] = hits by P1's side this possession, sideHits[1] = P2's side
 let sideHits = [0, 0];
+// blockHits[side]: 1 if first touch on this possession was a block (allows +3 more touches)
+let blockHits = [0, 0];
 
 const keys = {};
 
@@ -359,6 +361,7 @@ function beginServePhase(server) {
   lastTouched = -1;
   rallyHits = 0;
   sideHits = [0, 0];
+  blockHits = [0, 0];
   resetPlayers();
   players[server].x = server===0 ? W*0.15 : W*0.85;
   placeBallForServe(server);
@@ -478,6 +481,7 @@ function physicsStep() {
     const curSide  = ball.x < NET_X ? 0 : 1;
     if (prevSide !== undefined && prevSide !== curSide) {
       sideHits[curSide] = 0;
+      blockHits[curSide] = 0;
     }
     ball._lastSide = curSide;
 
@@ -530,15 +534,25 @@ function physicsStep() {
     const isHuman = (idx===0&&!p1AI)||(idx===1&&!p2AI);
     const isServingHuman = isHuman && (serveState==='tossed' || p.isServingHit) && serving===idx;
     const isServerPreRally = serving===idx && rallyHits===0;
-    if (serveState === 'live' && p.hitCooldown === 0 && !isServingHuman && !isServerPreRally) {
+    const justHitIt = lastTouched === p.id;
+    if (serveState === 'live' && !scoringLocked && p.hitCooldown === 0 && !isServingHuman && !isServerPreRally && !justHitIt) {
       const bdy = ball.y - (p.y - PLAYER_H * 0.5);
       const bdx = ball.x - p.x;
       if (Math.abs(bdx) < PLAYER_W * 0.8 && Math.abs(bdy) < PLAYER_H * 0.7) {
         const vxDir = p.id === 0 ? 1 : -1;
+        const pSide = p.id === 0 ? 0 : 1;
+        const maxTouches = 3 + blockHits[pSide];
+        if (sideHits[pSide] >= maxTouches) {
+          scoringLocked = true; rallyActive = false;
+          showFlash('4 Touches! ✋');
+          setTimeout(() => scorePoint(p.id === 0 ? 1 : 0), 800);
+          return;
+        }
         p.hitCooldown = 18;
         p.hitAnim = 14;
         if (!p.onGround) {
-          // In air — block: redirect back over net with reasonable pace
+          // Block — counts separately, doesn't use one of the 3 touches
+          if (sideHits[pSide] === 0) blockHits[pSide] = 1;
           ball.vx = -ball.vx * 0.7;
           ball.vy = -Math.abs(ball.vy) * 0.6 - 2;
           p.lastHitType = 'set';
@@ -664,48 +678,67 @@ function handleInput() {
             if (p.vx !== 0) p.facing = Math.sign(p.vx);
           }
 
-          // For vertical follow-up spike, bypass reaction gating — move directly to ball
-          const awaitingVerticalSpike = verticalHitMode && sideHits[idx] === 1 && rallyHits > 0;
+          // Follow-up spike after own bump/set — move to spike position
+          const ownBallGoingUp = lastTouched === idx && ball.vy < 0 && mySide;
+          const awaitingVerticalSpike = sideHits[idx] === 1 && rallyHits > 0 && ownBallGoingUp;
           if (awaitingVerticalSpike) {
             const spikeTarget = idx===0 ? NET_X - 90 : NET_X + 90;
             const diff = spikeTarget - p.x;
             p.vx = Math.abs(diff) > 4 ? (diff > 0 ? spd : -spd) : 0;
             if (p.vx !== 0) p.facing = Math.sign(p.vx);
             const safeFromNet = idx===0 ? p.x < NET_X - 60 : p.x > NET_X + 60;
-            if (p.onGround && Math.abs(p.x - spikeTarget) < 35 && ball.vy < 0 && safeFromNet) {
-              p.vy = jumpForce; p.onGround = false;
+            if (p.onGround && Math.abs(p.x - spikeTarget) < 35 && safeFromNet) {
+              p.vy = jumpForce; p.onGround = false; p.jumpTimer = 20;
             }
-          } else if (p.aiWantSpike && p.onGround && Math.abs(p.x - ball.x) < 50 && ball.vy < 0) {
+          } else if (p.onGround && lastTouched !== idx) {
+            // Predict when ball will be at hittable height near this player
+            // Jump peak is ~10 frames after takeoff — so jump when ball is ~10 frames away
+            const JUMP_LEAD = 10;
+            let px = ball.x, py = ball.y, pvx = ball.vx, pvy = ball.vy;
+            let framesUntilHittable = -1;
+            const hitHeight = p.y - PLAYER_H * 0.85;
+            for (let t = 1; t <= 30; t++) {
+              pvy += BASE_GRAVITY;
+              px += pvx; py += pvy;
+              // Only jump for ball that's rising or gently falling (not a diving spike)
+              if (Math.abs(px - p.x) < 55 && Math.abs(py - hitHeight) < 30 && pvy < 6) {
+                framesUntilHittable = t;
+                break;
+              }
+            }
             const safeFromNet = idx===0 ? p.x < NET_X - 60 : p.x > NET_X + 60;
-            if (safeFromNet) { p.vy = jumpForce; p.onGround = false; }
+            const shouldJump = framesUntilHittable > 0 && framesUntilHittable <= JUMP_LEAD + 3
+                               && (p.aiWantSpike ? safeFromNet : true);
+            if (shouldJump) {
+              p.vy = jumpForce; p.onGround = false; p.jumpTimer = 20;
+            }
           }
 
           // Hit when ball is realistically reachable
           const aiIsAirborne = !p.onGround || p.jumpTimer > 0;
-          const aiMaxDist = aiIsAirborne ? 28 : 60;
-          if (p.hitCooldown <= 0 && Math.hypot(ball.x-p.x, ball.y-(p.y-PLAYER_H*0.5)) < aiMaxDist) {
+          const hitRefY = aiIsAirborne ? p.y - PLAYER_H * 0.9 : p.y - PLAYER_H * 0.5;
+          const aiMaxDist = aiIsAirborne ? 45 : 60;
+          if (p.hitCooldown <= 0 && Math.hypot(ball.x-p.x, ball.y-hitRefY) < aiMaxDist) {
             tryHit(p, false, aiIsAirborne);
           }
 
         } else {
           // Ball on opponent's side — block or retreat to dig position
-          const netDist = idx===0 ? p.x - NET_X : NET_X - p.x;
-          const ballNearNet = Math.abs(ball.x - NET_X) < 120;
-          const ballComingDown = ball.vy > 0;
-          const ballHighAtNet = ball.y < NET_TOP + 80;
-          const blockChance = d * 0.55;
+          const netDist = Math.abs(p.x - NET_X);
+          const ballNearNet = Math.abs(ball.x - NET_X) < 140;
+          const ballHighAtNet = ball.y < NET_TOP + 100;
+          const blockChance = 0.3 + d * 0.4; // min 30% at any difficulty
 
-          // Move toward net to block if ball is coming over high
-          if (ballNearNet && ballHighAtNet && !ballComingDown) {
-            const blockX = idx===0 ? NET_X - 30 : NET_X + 30;
+          // Move toward net to block if ball is high near net
+          if (ballNearNet && ballHighAtNet) {
+            const blockX = idx===0 ? NET_X - 28 : NET_X + 28;
             const diff = blockX - p.x;
             if (Math.abs(diff) > 4) { p.vx = diff > 0 ? spd : -spd; p.facing = Math.sign(diff); }
           }
 
-          // Jump to block once near net and ball is descending
-          if (p.onGround && ballNearNet && ballHighAtNet && ballComingDown &&
-              netDist < 80 && Math.random() < blockChance) {
-            p.vy = jumpForce; p.onGround = false;
+          // Jump to block — don't wait for ball to descend, jump while it's still high
+          if (p.onGround && ballNearNet && ballHighAtNet && netDist < 80 && Math.random() < blockChance) {
+            p.vy = jumpForce; p.onGround = false; p.jumpTimer = 20;
           } else if (!ballNearNet || !ballHighAtNet) {
             // Defensive dig position
             const ballLandX = p.aiTargetX || (idx===0 ? NET_X*0.35 : NET_X+(W-NET_X)*0.65);
@@ -767,26 +800,26 @@ function handleInput() {
 }
 
 function tryHit(p, fromDive, wasInAir) {
-  if (serveState!=='live') return;
+  if (serveState!=='live' || scoringLocked) return;
 
   // Tick ball forward up to 8 steps to find real contact point
   // Divers get a larger reach and longer lookahead — they've committed their body
   const isAirborne = (!p.onGround || (p.jumpTimer > 0) || wasInAir);
-  const CONTACT_R = fromDive ? 90 : (isAirborne ? 28 : 60);
+  const CONTACT_R = fromDive ? 90 : (isAirborne ? 45 : 60);
   const MAX_TICKS = fromDive ? 24 : (isAirborne ? 0 : 10);
+  const hitRefY = isAirborne ? p.y - PLAYER_H * 0.9 : p.y - PLAYER_H * 0.5;
   const ownSide = p.id===0 ? ball.x < NET_X + BALL_R : ball.x > NET_X - BALL_R;
-  if (isAirborne && !ownSide) return; // can't spike a ball on the other side
+  if (isAirborne && !ownSide) return;
   let contacted = false;
   let bx = ball.x, by = ball.y, bvx = ball.vx, bvy = ball.vy;
 
-  // Check current position first
-  if (Math.hypot(bx - p.x, by - (p.y - PLAYER_H * 0.5)) <= CONTACT_R) {
+  if (Math.hypot(bx - p.x, by - hitRefY) <= CONTACT_R) {
     contacted = true;
   } else {
     for (let t = 1; t <= MAX_TICKS; t++) {
       bvy += BASE_GRAVITY;
       bx += bvx; by += bvy;
-      if (Math.hypot(bx - p.x, by - (p.y - PLAYER_H * 0.5)) <= CONTACT_R) {
+      if (Math.hypot(bx - p.x, by - hitRefY) <= CONTACT_R) {
         contacted = true;
         break;
       }
@@ -866,6 +899,15 @@ function tryHit(p, fromDive, wasInAir) {
     p.diveDir = dx > 0 ? 1 : -1;
   }
 
+  // Enforce 3-touch limit (block gives +1)
+  const maxTouches = 3 + blockHits[side];
+  if (sideHits[side] >= maxTouches) {
+    scoringLocked = true; rallyActive = false;
+    showFlash('4 Touches! ✋');
+    setTimeout(() => scorePoint(p.id === 0 ? 1 : 0), 800);
+    return;
+  }
+
   rallyHits++;
   sideHits[side]++;
 
@@ -907,8 +949,9 @@ function scorePoint(scorer) {
   scores[scorer]++;
   updateScoreDisplay();
   spawnParticles(ball.x, ball.y, scorer===0?P1_COLOR:P2_COLOR, 40);
-  const WIN=7;
-  if (scores[scorer]>=WIN) {
+  const WIN = 7;
+  const ahead = scores[scorer] - scores[1 - scorer];
+  if (scores[scorer] >= WIN && ahead >= 2) {
     showFlash(`P${scorer+1} WINS! 🏆`);
     setTimeout(()=>{ scores=[0,0]; updateScoreDisplay(); beginServePhase(scorer); }, 6000);
   } else {
@@ -933,7 +976,7 @@ function spawnParticles(x, y, color, count) {
   }
 }
 
-function showFlash(text) { flashMsg.text=text; flashMsg.timer=70; }
+function showFlash(text) { flashMsg.text=text; flashMsg.timer=180; }
 
 // ── Drawing ────────────────────────────────────────────────
 let skyGrad;
@@ -1205,7 +1248,7 @@ function drawFlash() {
   if (flashMsg.timer<=0) return;
   const alpha=Math.min(1,flashMsg.timer/20);
   ctx.save(); ctx.globalAlpha=alpha;
-  ctx.font=`bold ${flashMsg.timer>35?42:38}px Bebas Neue`; ctx.textAlign='center';
+  ctx.font=`bold ${flashMsg.timer>50?42:38}px Bebas Neue`; ctx.textAlign='center';
   ctx.fillStyle='#fff'; ctx.shadowColor='#ff6b35'; ctx.shadowBlur=30;
   ctx.fillText(flashMsg.text, W/2, H/2-40); ctx.restore();
   flashMsg.timer--;
@@ -1227,7 +1270,11 @@ function drawHUD() {
     ctx.fillText(lbl, W/2, NET_TOP-38); ctx.restore();
   }
   ctx.save(); ctx.textAlign='right'; ctx.font='11px Rajdhani'; ctx.fillStyle='#333';
-  ctx.fillText(`${Math.round(timeScale*100)}% speed`, W-6, H-5); ctx.restore();
+  ctx.fillText(`${Math.round(timeScale*100)}% speed`, W-6, H-5);
+  ctx.textAlign='left'; ctx.fillStyle='rgba(255,255,255,0.7)';
+  ctx.fillText(`ball(${Math.round(ball.x)},${Math.round(ball.y)})`, 4, H-16);
+  ctx.fillText(`p1(${Math.round(players[0].x)},${Math.round(players[0].y)}) p2(${Math.round(players[1].x)},${Math.round(players[1].y)})`, 4, H-5);
+  ctx.restore();
 }
 
 // ── Mobile Touch Controls ──────────────────────────────────
