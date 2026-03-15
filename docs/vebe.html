@@ -1,0 +1,1337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Volleyball</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0d1b2a; display:flex; flex-direction:column; height:100svh; overflow:hidden; font-family:'Courier New',monospace; user-select:none; -webkit-user-select:none; }
+  #canvas-wrap { flex:1; position:relative; overflow:hidden; min-height:0; }
+  canvas { display:block; touch-action:none; }
+  #ui { position:absolute; top:10px; left:0; right:0; display:flex; justify-content:space-between; align-items:center; padding:0 16px; pointer-events:none; z-index:10; }
+  #restart-btn { pointer-events:all; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.25); color:#fff; font-size:16px; width:34px; height:34px; border-radius:50%; cursor:pointer; display:flex; align-items:center; justify-content:center; -webkit-tap-highlight-color:transparent; touch-action:manipulation; }
+  #restart-btn:active { background:rgba(255,255,255,0.25); }
+  #score { color:#fff; font-size:22px; font-weight:bold; letter-spacing:3px; text-shadow:0 0 12px #4fc3f7; }
+  #hits  { color:#ffd54f; font-size:16px; letter-spacing:4px; }
+  #msg   { position:absolute; bottom:14px; left:0; right:0; text-align:center; color:#fff; font-size:18px; font-weight:bold; opacity:0; transition:opacity 0.25s; pointer-events:none; text-shadow:0 0 12px #4fc3f7; z-index:10; }
+  #msg.show { opacity:1; }
+  #jzone { flex-shrink:0; height:18vh; min-height:75px; max-height:130px; background:rgba(255,255,255,0.04); border-top:1px solid rgba(255,255,255,0.12); display:flex; align-items:center; justify-content:center; touch-action:none; position:relative; cursor:grab; }
+  #jzone-label { color:rgba(255,255,255,0.28); font-size:11px; letter-spacing:2px; pointer-events:none; }
+  #jdot { position:absolute; width:48px; height:48px; border-radius:50%; background:rgba(79,195,247,0.2); border:2px solid rgba(79,195,247,0.6); transform:translate(-50%,-50%); display:none; pointer-events:none; }
+  #start-overlay { position:absolute; inset:0; background:rgba(13,27,42,0.90); display:flex; flex-direction:column; align-items:center; justify-content:center; z-index:30; gap:14px; }
+  #start-overlay h1 { color:#fff; font-size:28px; letter-spacing:4px; text-shadow:0 0 20px #4fc3f7; }
+  #start-overlay p  { color:rgba(255,255,255,0.5); font-size:13px; text-align:center; line-height:1.9; padding:0 28px; }
+  #start-btn { margin-top:10px; padding:14px 44px; font-size:18px; font-family:'Courier New',monospace; font-weight:bold; letter-spacing:3px; background:#4fc3f7; color:#0d1b2a; border:none; border-radius:4px; cursor:pointer; -webkit-tap-highlight-color:transparent; touch-action:manipulation; }
+  #start-btn:active { background:#81d4fa; }
+</style>
+</head>
+<body>
+<div id="canvas-wrap">
+  <canvas id="c"></canvas>
+  <div id="ui">
+    <button id="restart-btn" type="button">↺</button>
+    <div id="score">0 — 0</div>
+    <div id="hits"></div>
+  </div>
+  <div id="msg"></div>
+  <div id="start-overlay">
+    <h1>🏐 VOLLEYBALL</h1>
+    <p>Drag bottom zone to move<br>Swipe on court to run &amp; spike<br>Swipe up then down for power spike</p>
+    <button id="start-btn" type="button">SERVE</button>
+  </div>
+</div>
+<div id="jzone">
+  <span id="jzone-label">DRAG HERE TO MOVE PLAYER</span>
+  <div id="jdot"></div>
+</div>
+<script>
+'use strict';
+
+// ═════════════════════════════════════════════════════════════════════════════
+// CODE QUALITY RULES  (enforce on every edit — no exceptions)
+// ═════════════════════════════════════════════════════════════════════════════
+// 1. DRY: no duplicate logic. One function per concept. Both teams share code.
+// 2. Single-purpose functions: each function does exactly one named thing.
+// 3. No magic numbers: use PHYSICS.*, COURT.* constants everywhere.
+// 4. No inline logic: extract to named functions before calling.
+// 5. No recursion in math/graphics code.
+// 6. Comments on every changed line explaining why, not what.
+// 7. switchActivePlayer() is the ONLY place activePlayerIdx is written.
+// 8. teamHit() is the ONLY place that drives pass/set/attack sequencing.
+// 9. recordHit() is the ONLY place hitCooldown/lastHitterId are written.
+// 10. scorePoint() is the ONLY place scores are incremented.
+// 11. Check for duplicate function names before adding any new function.
+// 12. Check for duplicate variable declarations before adding any new variable.
+// 13. No globals except: PHYSICS, COURT, CAMERA, US, THEM, ball, swipe,
+//     animations, ballInPlay, rallyActive, gameStarted, activePlayerIdx,
+//     jDown, jStart, W, H, canvas, ctx, and the DOM element consts.
+
+// ═════════════════════════════════════════════════════════════════════════════
+// INDEX  (find things fast — update when adding/removing)
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// CONSTANTS
+//   PHYSICS        frozen: gravity, dt, tickMs, netHeight, hitCooldown,
+//                           netBounceFactor, netFriction, contactHeight,
+//                           peakTimeFrac, preciseThresh, bumpThresh,
+//                           aiHitRange, aiDiveRange, aiDiveMaxZ, aiHitMaxZ
+//   COURT          frozen: halfWidth, length, netY, attackLine, oppAttack,
+//                           ourBackY, oppBackY
+//   CAMERA         frozen: pos{x,y,z}, fov, f{x,y,z}, r{x,y,z}, u{x,y,z}
+//
+// GAME STATE
+//   US / THEM      Team objects (see makeTeam for shape):
+//                    players[], col, netDir, backY, frontY, midY, isHuman,
+//                    backCourtY, frontCourtY,  ← derived zone positions, use these
+//                    hitCount, hitCooldown, lastHitterId, diveId, diveAnim,
+//                    diveGetup, posTargets[], aiCd, score
+//   ball           {x,y,z,vx,vy,vz}
+//   swipe          {active,startSx,startSy,maxDy,power,jumping,spiked,
+//                   playerId,runTarget,targetWorld}
+//   animations[]   {type,x,y,z,t,maxT}
+//   activePlayerIdx index into US.players — ONLY written via switchActivePlayer()
+//
+// CAMERA / PROJECTION
+//   worldToScreen(wx,wy,wz)  → {sx,sy,camZ}   (no side effects)
+//   project3(wx,wy,wz)       → {x,y,groundY,scale}
+//   p3(x,y,z)                alias for project3
+//   unproject(sx,sy)         → {x,y} world floor point or null
+//   pixelsPerMetre(p)        → number  (uses player's actual depth)
+//
+// PURE MATH (no globals written)
+//   ballPosAt(t)                     → {x,y,z}
+//   solveQuadPos(a,b,c)              → smallest positive root or null
+//   ballLandTime()                   → t or null
+//   ballLandPos()                    → {x,y,t} or null
+//   vzForPeak(currentZ,peakHeight)   → vz
+//   setBallArc(fx,fy,tx,ty,peakZ,tf) sets ball.x/y/z/vx/vy/vz
+//   computeSpikeVelocity(fx,fy,fz,tx,ty,power) → {vx,vy,vz,tf}
+//
+// PLAYER JUMP
+//   playerIsJumping(p)       → bool
+//   tickAllJumpPhysics()     gravity for all players both teams
+//   tickRunToTarget()        moves swipe player toward run spot
+//   checkSpikeContact()      fires spike when human jumper near ball
+//
+// JOYSTICK INPUT
+//   jBegin(cx,cy)            touch/click start on jzone
+//   jMove(cx,cy)             drag
+//   jEnd()                   release
+//   switchActivePlayer(idx)  ONLY writer of activePlayerIdx; resets jStart
+//   resetJStartForActivePlayer()  re-anchors jStart to new active player
+//
+// CANVAS SWIPE (run + spike)
+//   canvasSwipeStart(sx,sy)
+//   canvasSwipeMove(sx,sy)
+//   canvasSwipeEnd(sx,sy)
+//   updateSpikeTarget(sx,sy) sets swipe.targetWorld
+//   detectPowerSpike(finalDy) sets swipe.power
+//   triggerJump()            sets jumpVz from swipe height
+//   resetSwipeState()        clears swipe after landing
+//
+// HIT LOGIC (both teams share)
+//   playerIndex(team,player)    → index of player in team.players
+//   teammate(team,player)       → the other player on the team
+//   posAfterPass(team,passer)   sets posTargets after hit 1
+//   posAfterSet(team,setter)    sets posTargets after hit 2
+//   posAfterAttack(team,atk)    sets posTargets after hit 3
+//   recordHit(team,player)      ONLY writer of hitCooldown/lastHitterId
+//   faultTooManyTouches(team)
+//   teamHit(team,player)        ONLY driver of pass/set/attack sequence
+//
+// AI (one function for both teams)
+//   planTeamReceive(team)    assigns receiverId/setterIdx, sets posTargets
+//   eligibleHitter(team)     → player eligible to hit (not lastHitterId, closest to ball)
+//   aiTickTeam(team)         auto-hits when in range
+//
+// POSITIONING
+//   tickTeamPositioning(team) lerps non-active players toward posTargets
+//
+// PHYSICS TICK
+//   handleNetCrossing(prevY) net bounce + triggers planTeamReceive
+//   physTick()               ball movement, timers, scoring trigger
+//
+// SCORING
+//   scorePoint()   ONLY writer of team scores; correct volleyball rules
+//   endRally(delay)
+//
+// SERVE / RESET
+//   resetTeam(team,positions)
+//   serveBall()
+//
+// RENDER
+//   drawCourt()      court, net, shadows, landing circle
+//   drawPlayer(p,team,isActive)  one function for both teams
+//   drawAllPlayers() opp first then us
+//   drawBall()
+//   drawAnims()
+//
+// GAME LOOP
+//   tick()     setTimeout loop: physics + AI + positioning
+//   render()   rAF loop: all draw calls
+//
+// START/RESTART
+//   doStart(), doRestart()
+
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DOM
+// ─────────────────────────────────────────────────────────────────────────────
+const canvas      = document.getElementById('c');
+const ctx         = canvas.getContext('2d');
+const scoreEl     = document.getElementById('score');
+const hitsEl      = document.getElementById('hits');
+const msgEl       = document.getElementById('msg');
+const jzone       = document.getElementById('jzone');
+const jdot        = document.getElementById('jdot');
+const startOverlay= document.getElementById('start-overlay');
+const startBtn    = document.getElementById('start-btn');
+const restartBtn  = document.getElementById('restart-btn');
+
+let W, H;
+function resize() {
+  const wrap = canvas.parentElement;
+  W = canvas.width  = wrap.clientWidth;
+  H = canvas.height = wrap.clientHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONSTANTS  (frozen — never mutate)
+// ─────────────────────────────────────────────────────────────────────────────
+const PHYSICS = Object.freeze({
+  gravity:        -9.8,
+  dt:              16 / 1000,
+  tickMs:          16,
+  netHeight:       2.43,
+  hitCooldown:     1.2,   // seconds before same player can hit again
+  netBounceFactor: 0.6,   // vy energy kept after net bounce
+  netFriction:     0.8,   // vx energy kept after net bounce
+  contactHeight:   1.2,   // ball z at moment of ground-level contact
+  peakTimeFrac:    0.38,  // fraction of flight time to arc peak
+  preciseThresh:   0.8,   // metres — closer = precise contact
+  bumpThresh:      3.0,   // metres — closer = bump, farther = dive
+  aiHitRange:      3.5,   // metres — auto-hit range
+  aiDiveRange:     6.0,   // metres — dive range
+  aiDiveMaxZ:      0.5,   // ball must be this low for dive
+  aiHitMaxZ:       1.5,   // ball must be this low for auto-hit
+  spikePeakRadius: 5.0,  // contact detection radius at jump peak
+  spikeRadius:     2.0,  // contact detection radius off peak
+  spikeZOffset:    0.2,  // ball z placed just above contact point at spike
+});
+
+const COURT = Object.freeze({
+  halfWidth:   4.5,  // x extent
+  length:      18,   // full y length
+  netY:        9,    // net position on y axis
+  attackLine:  3,    // our attack line (y)
+  oppAttack:   15,   // opp attack line (y)
+  ourBackY:    0,    // our back line
+  oppBackY:    18,   // opp back line
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CAMERA  (proper 3-D view matrix)
+// ─────────────────────────────────────────────────────────────────────────────
+const CAMERA = (() => {
+  const pos = Object.freeze({ x:0, y:-1.1, z:18 }); // 1m behind baseline, 18m high (lowered 2m from 20)
+  const aim = Object.freeze({ x:0, y:9,   z:2.43 }); // aimed at net top center
+  const fov = 486; // 60° FOV — 5° narrower than before (was 440/65°)
+
+  // Forward unit vector
+  const fdx = aim.x-pos.x, fdy = aim.y-pos.y, fdz = aim.z-pos.z;
+  const fl  = Math.sqrt(fdx*fdx + fdy*fdy + fdz*fdz);
+  const f   = Object.freeze({ x:fdx/fl, y:fdy/fl, z:fdz/fl });
+
+  // Right = forward × world-up(0,0,1)
+  const rl = Math.sqrt(f.y*f.y + f.x*f.x);
+  const r  = Object.freeze({ x:f.y/rl, y:-f.x/rl, z:0 });
+
+  // Up = right × forward
+  const u = Object.freeze({
+    x: r.y*f.z - r.z*f.y,
+    y: r.z*f.x - r.x*f.z,
+    z: r.x*f.y - r.y*f.x,
+  });
+
+  return Object.freeze({ pos, fov, f, r, u });
+})();
+
+// Transform one world point into camera space {sx, sy, camZ}
+function worldToScreen(wx, wy, wz) {
+  const dx = wx - CAMERA.pos.x, dy = wy - CAMERA.pos.y, dz = wz - CAMERA.pos.z;
+  const camX = dx*CAMERA.r.x + dy*CAMERA.r.y + dz*CAMERA.r.z;
+  const camY = dx*CAMERA.u.x + dy*CAMERA.u.y + dz*CAMERA.u.z;
+  const camZ = dx*CAMERA.f.x + dy*CAMERA.f.y + dz*CAMERA.f.z;
+  if (camZ < 0.1) return { sx: W*0.5, sy: H*0.5, camZ: 0.1 };
+  return {
+    sx: W*0.5 + (camX/camZ)*CAMERA.fov,
+    sy: H*0.5 - (camY/camZ)*CAMERA.fov,
+    camZ,
+  };
+}
+
+// Full projection: screen pos + ground position + perspective scale
+function project3(wx, wy, wz) {
+  const pt = worldToScreen(wx, wy, wz);
+  const gd = worldToScreen(wx, wy, 0); // ground point — no recursion
+  const scale = clamp(CAMERA.fov / pt.camZ / 100, 0.05, 2.0);
+  return { x: pt.sx, y: pt.sy, groundY: gd.sy, scale };
+}
+const p3 = (x, y, z) => project3(x, y, z); // short alias for draw code
+
+// Unproject screen point to world floor (z=0) via ray-plane intersection
+function unproject(sx, sy) {
+  const rdx = (sx - W*0.5) / CAMERA.fov;
+  const rdy = -(sy - H*0.5) / CAMERA.fov;
+  const rx = rdx*CAMERA.r.x + rdy*CAMERA.u.x + CAMERA.f.x;
+  const ry = rdx*CAMERA.r.y + rdy*CAMERA.u.y + CAMERA.f.y;
+  const rz = rdx*CAMERA.r.z + rdy*CAMERA.u.z + CAMERA.f.z;
+  if (Math.abs(rz) < 0.001) return null;
+  const t = -CAMERA.pos.z / rz; // intersect z=0
+  if (t < 0) return null;
+  return { x: CAMERA.pos.x + t*rx, y: CAMERA.pos.y + t*ry };
+}
+
+// Screen pixels per world metre at a given player's depth
+function pixelsPerMetre(p) {
+  const a = worldToScreen(p.x,   p.y, 0);
+  const b = worldToScreen(p.x+1, p.y, 0);
+  return Math.abs(b.sx - a.sx);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UTILITIES
+// ─────────────────────────────────────────────────────────────────────────────
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const rnd   = (a, b)      => a + Math.random() * (b - a);
+const dist2 = (ax, ay, bx, by) => Math.sqrt((ax-bx)**2 + (ay-by)**2);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TEAM  — both sides share all logic; direction drives behavior
+// ─────────────────────────────────────────────────────────────────────────────
+//  netDir:  +1 means net is in +y direction (our side faces y=0..9)
+//          -1 means net is in -y direction (opp side faces y=9..18)
+//  backY:   y of own back line
+//  frontY:  y of own attack line
+//  midY:    y of own mid court
+//
+function makeTeam({ players, col, netDir, backY, frontY, midY, isHuman }) {
+  // Derive court zones once — callers use these, never compute inline
+  const backCourtY  = backY  + netDir * 1.0; // 1m in from back line
+  const frontCourtY = frontY + netDir * 1.0; // 1m past attack line toward net
+  return {
+    players,           // array of player objects
+    col,               // default color
+    netDir,            // +1 = net is in +y direction, -1 = net is in -y direction
+    backY,             // own back line y
+    frontY,            // own attack line y
+    midY,              // own mid court y
+    backCourtY,        // typical back-court receiving position y
+    frontCourtY,       // typical front-court setting position y
+    isHuman,           // true = player controlled
+    hitCount:    0,
+    hitCooldown: 0,
+    lastHitterId:-1,
+    diveId:     -1,
+    diveAnim:    0,
+    diveGetup:   0,
+    posTargets: [null, null],
+    aiCd:        0,
+    score:       0,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GAME STATE
+// ─────────────────────────────────────────────────────────────────────────────
+const US = makeTeam({
+  players: [
+    { x:-1.5, y:3.5, id:0, name:'L', col:'#4fc3f7', jumpZ:0, jumpVz:0 },
+    { x: 1.5, y:3.5, id:1, name:'R', col:'#81c784', jumpZ:0, jumpVz:0 },
+  ],
+  col: '#4fc3f7',
+  netDir:  1,  // net is at higher y
+  backY:   COURT.ourBackY,
+  frontY:  COURT.attackLine,
+  midY:    4.5,
+  isHuman: true,
+});
+
+const THEM = makeTeam({
+  players: [
+    { x:-1.5, y:14.5, id:2, name:'', col:'#ef9a9a', jumpZ:0, jumpVz:0 },
+    { x: 1.5, y:14.5, id:3, name:'', col:'#ef9a9a', jumpZ:0, jumpVz:0 },
+  ],
+  col: '#ef9a9a',
+  netDir: -1,  // net is at lower y
+  backY:   COURT.oppBackY,
+  frontY:  COURT.oppAttack,
+  midY:    13.5,
+  isHuman: false,
+});
+
+const ball = { x:0, y:4.5, z:3, vx:0, vy:0, vz:0 };
+let animations  = [];
+let landingPos  = null; // updated each physics tick — read by render
+let ballInPlay  = false;
+let rallyActive = false;
+let gameStarted = false;
+let activePlayerIdx = 0; // index into US.players
+
+// Human swipe gesture state
+const swipe = {
+  active:      false,
+  startSx:     0,
+  startSy:     0,
+  maxDy:       0,
+  power:       false,
+  jumping:     false,
+  spiked:      false,
+  playerId:    -1,
+  runTarget:   null,
+  targetWorld: null,
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UI HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+function updateScore() {
+  scoreEl.textContent = `${US.score} — ${THEM.score}`;
+}
+function updateHits() {
+  hitsEl.textContent = US.hitCount
+    ? [1,2,3].map(i => i <= US.hitCount ? '●' : '○').join(' ')
+    : '';
+}
+function showMsg(txt, dur = 1800) {
+  msgEl.textContent = txt;
+  msgEl.classList.add('show');
+  clearTimeout(showMsg._t);
+  showMsg._t = setTimeout(() => msgEl.classList.remove('show'), dur);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PURE PHYSICS MATH  (no side effects, no globals written)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Ball position at t seconds from now
+function ballPosAt(t) {
+  return {
+    x: ball.x + ball.vx*t,
+    y: ball.y + ball.vy*t,
+    z: ball.z + ball.vz*t + 0.5*PHYSICS.gravity*t*t,
+  };
+}
+
+// Solve quadratic at^2 + bt + c = 0, return smallest positive root or null
+function solveQuadPos(a, b, c) {
+  const disc = b*b - 4*a*c;
+  if (disc < 0) return null;
+  const r1 = (-b - Math.sqrt(disc)) / (2*a);
+  const r2 = (-b + Math.sqrt(disc)) / (2*a);
+  const pos = [r1, r2].filter(t => t > 0.001);
+  return pos.length ? Math.min(...pos) : null;
+}
+
+// Time until ball lands at z=0
+function ballLandTime() {
+  return solveQuadPos(0.5*PHYSICS.gravity, ball.vz, ball.z);
+}
+
+// Ball landing position {x, y, t} or null
+function ballLandPos() {
+  if (ball.z <= 0.05 && ball.vz <= 0) return { x:ball.x, y:ball.y, t:0 };
+  const t = ballLandTime();
+  if (!t) return null;
+  return { x: ball.x + ball.vx*t, y: ball.y + ball.vy*t, t };
+}
+
+// Initial vz to reach peakHeight above currentZ
+function vzForPeak(currentZ, peakHeight) {
+  const rise = peakHeight - currentZ;
+  if (rise <= 0) return 0;
+  return Math.sqrt(2 * Math.abs(PHYSICS.gravity) * rise);
+}
+
+// Set ball velocity for arc from (fx,fy) to (tx,ty) with given peak and flight time
+function setBallArc(fx, fy, tx, ty, peakZ, tf) {
+  ball.x  = fx; ball.y = fy; ball.z = 0.9;
+  ball.vx = (tx-fx) / tf;
+  ball.vy = (ty-fy) / tf;
+  const th = tf / 2;
+  ball.vz = (peakZ - ball.z - 0.5*PHYSICS.gravity*th*th) / th;
+}
+
+// Ball velocity to spike from contact point to target floor point
+// power=true: steep downward drive; power=false: normal arc
+function computeSpikeVelocity(fx, fy, fz, tx, ty, power) {
+  const targetY = Math.max(ty, COURT.netY + 1.5); // always land on opp side
+  let vz, tf;
+  if (power) {
+    vz = -8.0; // strong downward drive m/s
+    tf = solveQuadPos(0.5*PHYSICS.gravity, vz, fz);
+    if (!tf) tf = 0.4;
+  } else {
+    const peak    = fz + 2.0;
+    const vzUp    = vzForPeak(fz, peak);
+    const tUp     = vzUp / Math.abs(PHYSICS.gravity);
+    const tDown   = Math.sqrt(2 * peak / Math.abs(PHYSICS.gravity));
+    vz = vzUp;
+    tf = tUp + tDown;
+  }
+  return { vx:(tx-fx)/tf, vy:(targetY-fy)/tf, vz, tf };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PLAYER JUMP PHYSICS
+// ─────────────────────────────────────────────────────────────────────────────
+function playerIsJumping(p) {
+  return p.jumpZ > 0 || p.jumpVz > 0 || (swipe.jumping && swipe.playerId === p.id);
+}
+
+// Gravity integration for all players on both teams
+function tickAllJumpPhysics() {
+  [US, THEM].forEach(team => {
+    team.players.forEach(p => {
+      if (p.jumpVz === 0 && p.jumpZ === 0) return;
+      p.jumpZ  += p.jumpVz * PHYSICS.dt;
+      p.jumpVz += PHYSICS.gravity * PHYSICS.dt;
+      if (p.jumpZ <= 0 || p.jumpZ > 20) {
+        p.jumpZ = 0; p.jumpVz = 0;
+        if (team.diveId === p.id) { team.diveId = -1; team.diveAnim = 0; }
+        if (swipe.playerId === p.id) resetSwipeState();
+      }
+    });
+  });
+}
+
+// Move swipe player toward run target on the ground
+function tickRunToTarget() {
+  if (!swipe.runTarget || swipe.jumping) return;
+  const p = US.players.find(pl => pl.id === swipe.playerId);
+  if (!p || p.jumpZ > 0.01) return;
+  moveToward(p, swipe.runTarget.x, swipe.runTarget.y, 14);
+}
+
+// Check if jumping human player contacts ball and fire spike
+function checkSpikeContact() {
+  if (!ballInPlay || swipe.spiked || swipe.playerId < 0) return;
+  const p = US.players.find(pl => pl.id === swipe.playerId);
+  if (!p || (p.jumpVz === 0 && p.jumpZ === 0)) return;
+  const dx = ball.x-p.x, dy = ball.y-p.y, dz = ball.z-p.jumpZ;
+  const dist3 = Math.sqrt(dx*dx + dy*dy + dz*dz);
+  const atPeak = p.jumpVz <= 0 && p.jumpVz > -3;
+  if (dist3 > (atPeak ? PHYSICS.spikePeakRadius : PHYSICS.spikeRadius)) return;
+
+  // Contact — fire spike
+  swipe.spiked = true; swipe.active = false;
+  const tgt = (swipe.targetWorld && swipe.targetWorld.y > COURT.netY)
+    ? swipe.targetWorld
+    : { x:rnd(-3.5,3.5), y:rnd(11,17) };
+  const sv = computeSpikeVelocity(p.x, p.y, p.jumpZ, tgt.x, tgt.y, swipe.power);
+  ball.x=p.x; ball.y=p.y; ball.z=p.jumpZ+PHYSICS.spikeZOffset;
+  ball.vx=sv.vx; ball.vy=sv.vy; ball.vz=sv.vz;
+
+  // Spike counts as a hit — check fault, record, then reset as ball crosses net
+  if (US.hitCount >= 3) { faultTooManyTouches(US); return; }
+  recordHit(US, p);
+  US.hitCount = 0; updateHits(); // spike always goes over — reset immediately
+  pushSparkAnim();
+  showMsg(swipe.power ? 'Power Spike! 💥' : 'Spike! ⚡');
+  posAfterAttack(US, p);        // reposition both players via shared logic
+  planTeamReceive(THEM);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// JOYSTICK
+// ─────────────────────────────────────────────────────────────────────────────
+let jDown    = false;
+let jCurrent = { sx:0, sy:0 }; // last known finger position while down
+let jStart   = { sx:0, sy:0, px:0, py:0 };
+
+function switchActivePlayer(idx) {
+  if (jDown) return; // finger down at net crossing — keep current player
+  activePlayerIdx = idx;
+  resetJStartForActivePlayer();
+}
+
+// Used after a hit — must always switch since hitter is no longer eligible
+function switchActivePlayerOnHit(idx) {
+  activePlayerIdx = idx;
+  if (jDown) {
+    // Re-anchor so accumulated finger delta doesn't snap new player
+    const p = US.players[activePlayerIdx];
+    jStart = { sx:jCurrent.sx, sy:jCurrent.sy, px:p.x, py:p.y };
+  } else {
+    resetJStartForActivePlayer();
+  }
+}
+
+function resetJStartForActivePlayer() {
+  if (!jDown) return;
+  const p = US.players[activePlayerIdx];
+  jStart = { sx:jStart.sx, sy:jStart.sy, px:p.x, py:p.y };
+}
+
+function jBegin(cx, cy) {
+  jDown = true;
+  swipe.active = false; swipe.playerId = -1; // cancel any swipe
+  const p = US.players[activePlayerIdx];
+  jStart = { sx:cx, sy:cy, px:p.x, py:p.y };
+  const rect = jzone.getBoundingClientRect();
+  jdot.style.display = 'block';
+  jdot.style.left    = cx + 'px';
+  jdot.style.top     = (rect.top + rect.height/2) + 'px';
+}
+
+function jMove(cx, cy) {
+  if (!jDown) return;
+  jCurrent.sx = cx; jCurrent.sy = cy;
+  if (US.diveGetup > 0) return;
+  const p   = US.players[activePlayerIdx];
+  const ppm = pixelsPerMetre(p);
+  p.x = clamp(jStart.px + (cx - jStart.sx) / ppm,          -COURT.halfWidth, COURT.halfWidth);
+  p.y = clamp(jStart.py - (cy - jStart.sy) / ppm * 1.5, -1, COURT.netY);
+  jdot.style.left = cx + 'px';
+}
+
+function jEnd() {
+  jDown = false;
+  jCurrent.sx = 0; jCurrent.sy = 0;
+  jdot.style.display = 'none';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CANVAS SWIPE — run & spike
+// ─────────────────────────────────────────────────────────────────────────────
+function resetSwipeState() {
+  swipe.playerId = -1; swipe.jumping = false;
+  swipe.spiked   = false; swipe.runTarget = null;
+}
+
+function updateSpikeTarget(sx, sy) {
+  const wp = unproject(sx, sy);
+  swipe.targetWorld = wp || { x:(sx - W*0.5) / 30, y:rnd(11,16) };
+}
+
+function detectPowerSpike(finalDy) {
+  // Power gesture: swipe up significantly then back down 70%+
+  swipe.power = swipe.maxDy > 30 && finalDy < swipe.maxDy * 0.3;
+}
+
+function triggerJump() {
+  if (swipe.jumping || swipe.maxDy <= 20) return;
+  const p = US.players.find(pl => pl.id === swipe.playerId);
+  if (!p) return;
+  const ppm = pixelsPerMetre(p);
+  const heightM = clamp((swipe.maxDy / ppm) * 3, 0.5, 4.0);
+  p.jumpVz    = vzForPeak(p.jumpZ, heightM);
+  swipe.jumping = true;
+}
+
+function canvasSwipeStart(sx, sy) {
+  if (!gameStarted || !ballInPlay) return;
+  if (ball.y > COURT.netY && ball.vy > 0) return; // ball gone to opp side
+  const wp = unproject(sx, sy);
+  if (!wp || wp.y < -1) return;
+  const ap = US.players[activePlayerIdx];
+  if (playerIsJumping(ap)) return; // already in the air
+  jDown = false; // cancel joystick
+  swipe.active    = true;
+  swipe.startSx   = sx; swipe.startSy = sy;
+  swipe.maxDy     = 0;  swipe.power   = false;
+  swipe.jumping   = false; swipe.spiked = false;
+  swipe.runTarget = { x:wp.x, y:clamp(wp.y, -1, COURT.netY) };
+  swipe.targetWorld = null;
+  swipe.playerId  = ap.id;
+}
+
+function canvasSwipeMove(sx, sy) {
+  if (!swipe.active) return;
+  const dy = swipe.startSy - sy;
+  if (dy > swipe.maxDy) swipe.maxDy = dy;
+  updateSpikeTarget(sx, sy);
+}
+
+function canvasSwipeEnd(sx, sy) {
+  if (!swipe.active) { swipe.active = false; return; }
+  swipe.active = false;
+  updateSpikeTarget(sx, sy);
+  detectPowerSpike(swipe.startSy - sy);
+  triggerJump();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HIT LOGIC  — one function handles both teams
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Returns the opposing team — single place for this lookup
+function otherTeam(team) { return team === US ? THEM : US; }
+
+// Push a spark animation at the ball's current position
+function pushSparkAnim() {
+  animations.push({ type:'spark', x:ball.x, y:ball.y, z:ball.z, t:0, maxT:0.45 });
+}
+
+// Index (0 or 1) of the team player closest to world point (x,y)
+function closerPlayerIdx(team, x, y) {
+  const d0 = dist2(team.players[0].x, team.players[0].y, x, y);
+  const d1 = dist2(team.players[1].x, team.players[1].y, x, y);
+  return d0 < d1 ? 0 : 1;
+}
+
+// Move player one step toward (tx,ty) at speed m/s; returns true on arrival
+function moveToward(p, tx, ty, speed) {
+  const dx = tx - p.x, dy = ty - p.y;
+  const d = Math.sqrt(dx*dx + dy*dy);
+  if (d < 0.01) { p.x = tx; p.y = ty; return true; }
+  const step = speed * PHYSICS.dt;
+  p.x += dx/d * Math.min(step, d);
+  p.y += dy/d * Math.min(step, d);
+  return false;
+}
+
+// Returns shot spread (m) based on how close player was to ball landing spot
+function contactSpread(distToLand) {
+  if (distToLand < PHYSICS.preciseThresh) return 0.2;
+  if (distToLand < PHYSICS.bumpThresh)   return 0.8;
+  return 1.8;
+}
+
+// ONLY writer of hitCooldown and lastHitterId
+function recordHit(team, player) {
+  team.hitCooldown  = PHYSICS.hitCooldown; // use named constant
+  team.lastHitterId = player.id;
+  otherTeam(team).lastHitterId = -1; // other team can now all hit again
+}
+
+// ONLY writer of team scores — all scoring goes through here
+function awardPoint(scoringTeam, msg) {
+  scoringTeam.score++;
+  updateScore();
+  showMsg(msg, 2200);
+}
+
+// Fault: team exceeded allowed touches — award point to other side
+function faultTooManyTouches(team) {
+  awardPoint(otherTeam(team), team.isHuman ? '4 touches! 😬' : 'Their 4 touches! 🏐');
+  endRally(2200);
+}
+
+// Index of a player within their team array
+function playerIndex(team, player) {
+  return team.players.indexOf(player);
+}
+
+// Returns the opponent of player within team (the other player)
+function teammate(team, player) {
+  return team.players[1 - playerIndex(team, player)];
+}
+
+// Set positions after a pass — setter moves to front, passer stays
+function posAfterPass(team, passer) {
+  const si        = playerIndex(team, teammate(team, passer)); // setter = non-passer
+  const passerIdx = playerIndex(team, passer);
+  if (team.isHuman) {
+    // Passer drifts to attack line, opposite side from setter, ready to spike
+    const sideX = team.players[si].x >= 0 ? -2.0 : 2.0;
+    team.posTargets[passerIdx] = { x: sideX, y: team.frontCourtY + team.netDir };
+    switchActivePlayerOnHit(si);
+    team.posTargets[si] = null; // setter stands still, waiting for joystick
+  } else {
+    team.posTargets[passerIdx] = null;
+    team.posTargets[si] = { x:rnd(-2,2), y:team.frontCourtY };
+  }
+}
+
+// Set positions after a set — hitter moves to attack spot, setter retreats
+function posAfterSet(team, setter) {
+  const setterIdx = playerIndex(team, setter);
+  const hitterIdx = 1 - setterIdx; // hitter is the non-setter
+  team.posTargets[hitterIdx] = { x:team.players[hitterIdx].x, y:team.frontCourtY };
+  team.posTargets[setterIdx] = { x:rnd(-1,1), y:team.midY }; // setter retreats to mid
+  if (team.isHuman) switchActivePlayerOnHit(hitterIdx);
+}
+
+// Set positions after an attack — both players reset to receiving spots
+function posAfterAttack(team, attacker) {
+  const ai = playerIndex(team, attacker);
+  team.posTargets[ai]   = null;                                          // attacker recovers freely
+  team.posTargets[1-ai] = { x:rnd(-1.5,1.5), y:team.midY }; // teammate to mid
+  if (team.isHuman) switchActivePlayerOnHit(1 - ai);
+}
+
+// Team hit the ball — drives all pass/set/attack sequencing
+function teamHit(team, player) {
+  if (team.hitCooldown > 0) return;
+  if (player.id === team.lastHitterId) return; // cooldown blocks double-touch
+  if (team.hitCount >= 3) { faultTooManyTouches(team); return; }
+
+  recordHit(team, player);
+  team.hitCount++;
+  if (team === US) updateHits();
+  pushSparkAnim();
+
+  const towardNet = team.netDir;
+  const lp        = ballLandPos();
+  const distToLand = lp ? dist2(player.x, player.y, lp.x, lp.y) : 3.0;
+
+  const spread = contactSpread(distToLand);
+
+  if      (team.hitCount === 3) doAttack(team, player, spread);
+  else if (team.hitCount === 2) doSet(team, player, spread, towardNet);
+  else                          doPass(team, player, spread, towardNet);
+}
+
+function doPass(team, player, spread, towardNet) {
+  const toX = clamp(rnd(-spread, spread), -4.0, 4.0);
+  const toY = clamp(team.midY + towardNet*2.5 + rnd(-spread*0.5, spread*0.5),
+                    team.midY, team.midY + towardNet*3.5);
+  setBallArc(ball.x, ball.y, toX, toY, 5.0, 1.8);
+  showMsg(spread < 0.5 ? 'Pass! 👌' : 'Pass!');
+  posAfterPass(team, player);
+}
+
+function doSet(team, player, spread, towardNet) {
+  const nextHitter = eligibleHitter(team);
+  const sideX = nextHitter ? nextHitter.x : (rnd(0,1)<0.5 ? -1:1) * rnd(2.0, COURT.halfWidth-0.5);
+  const toX   = clamp(sideX + rnd(-spread, spread), -COURT.halfWidth, COURT.halfWidth);
+  const toY   = clamp(team.midY + towardNet*1.5 + rnd(-spread, spread),
+                      team.midY + towardNet*0.5, team.midY + towardNet*2.5);
+  setBallArc(ball.x, ball.y, toX, toY, 4.5, 1.5);
+  showMsg(spread < 0.5 ? 'Set! 👌' : 'Set!');
+  posAfterSet(team, player);
+}
+
+function doAttack(team, player, spread) {
+  const opp   = otherTeam(team);
+  const toX   = clamp(rnd(-COURT.halfWidth+1, COURT.halfWidth-1) + rnd(-spread,spread), -COURT.halfWidth, COURT.halfWidth);
+  const toY   = clamp(rnd(opp.midY, opp.backY) + rnd(-spread,spread)*2, opp.frontCourtY, opp.backY);
+  const tf    = rnd(1.4, 2.2);
+  ball.x = player.x; ball.y = player.y; ball.z = PHYSICS.contactHeight;
+  ball.vx = (toX - ball.x) / tf;
+  ball.vy = (toY - ball.y) / tf;
+  const peakZ = clamp(3.5 + dist2(player.x,player.y,ball.x,ball.y)*0.4, 3.5, 6.0);
+  const th    = tf * PHYSICS.peakTimeFrac;
+  ball.vz = (peakZ - ball.z - 0.5*PHYSICS.gravity*th*th) / th;
+  showMsg(spread < 0.5 ? 'Attack! ⚡' : 'Attack!');
+  posAfterAttack(team, player);
+  // hitCount stays at 3 — reset happens in handleNetCrossing on clean crossing
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AI — one function for any team
+// ─────────────────────────────────────────────────────────────────────────────
+
+function planTeamReceive(team) {
+  const lp = ballLandPos(); if (!lp) return;
+  const ri = closerPlayerIdx(team, lp.x, lp.y);
+  const si = 1 - ri;
+  // Don't override posTargets for the human's active player — they control it via joystick
+  if (!team.isHuman || ri !== activePlayerIdx) {
+    team.posTargets[ri] = {
+      x: clamp(lp.x, -COURT.halfWidth, COURT.halfWidth),
+      y: clamp(lp.y, Math.min(team.backY, team.backCourtY + team.netDir*4),
+                     Math.max(team.backY, team.backCourtY + team.netDir*4)),
+    };
+  }
+  if (!team.isHuman || si !== activePlayerIdx) {
+    // Human inactive player drifts center-net; AI uses random front-court spot
+    team.posTargets[si] = team.isHuman
+      ? { x: 0, y: team.midY + team.netDir * 1.5 }
+      : { x: rnd(-2.0, 2.0), y: team.frontCourtY };
+  }
+}
+
+// Eligible hitter: whoever did NOT last touch the ball, closest to landing spot
+function eligibleHitter(team) {
+  const lp = ballLandPos();
+  const candidates = team.players.filter(p => p.id !== team.lastHitterId);
+  if (!candidates.length) return null;
+  if (!lp) return candidates[0];
+  return candidates.reduce((best, p) =>
+    dist2(p.x, p.y, lp.x, lp.y) < dist2(best.x, best.y, lp.x, lp.y) ? p : best
+  );
+}
+
+// Advance ball AI for a team — same logic regardless of side
+function aiTickTeam(team) {
+  if (!rallyActive || !ballInPlay) return;
+  // Only act when ball is coming toward this team's side
+  const ballComingToUs = team.netDir === 1
+    ? (ball.vy <= 0 || ball.y <= COURT.netY)
+    : (ball.vy >= 0 || ball.y >= COURT.netY);
+  if (!ballComingToUs) return;
+  if (team.hitCount >= 3) return; // already attacked — wait for clean net crossing
+  if (ball.vz > 0) return;        // ball still rising — wait, prevents bang-bang
+
+  const hitter = eligibleHitter(team);
+  if (!hitter) return;
+  if (playerIsJumping(hitter)) return;
+
+  const lp = ballLandPos(); if (!lp || lp.t <= 0) return;
+  const gd = Math.min(
+    dist2(hitter.x, hitter.y, ball.x, ball.y),
+    dist2(hitter.x, hitter.y, lp.x,   lp.y)
+  );
+
+  if (ball.z < PHYSICS.aiHitMaxZ) {   // ball low enough to hit
+    if (gd < PHYSICS.aiHitRange) {      // player close enough — auto-hit
+      teamHit(team, hitter);
+    } else if (gd < PHYSICS.aiDiveRange && ball.z < PHYSICS.aiDiveMaxZ) {
+      aiDive(team, hitter, lp);
+    }
+  }
+}
+
+function aiDive(team, hitter, lp) {
+  hitter.x      = lp.x;
+  hitter.y      = clamp(lp.y, Math.min(team.backY, team.midY)+0.2, Math.max(team.backY, team.midY)-0.2);
+  team.diveId   = hitter.id;
+  team.diveAnim = 1.0;
+  team.diveGetup= 1.5;
+  teamHit(team, hitter);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POSITIONING  — one function for any team
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Nudge player away from ref point by a fixed step; apply same vector to posTarget if set
+function nudgeAwayFrom(p, target, rx, ry, step) {
+  const dx = p.x - rx, dy = p.y - ry;
+  const d  = Math.sqrt(dx*dx + dy*dy);
+  if (d < 0.001) return; // coincident — skip
+  const nx = dx/d * step, ny = dy/d * step;
+  p.x += nx; p.y += ny;
+  if (target) { target.x += nx; target.y += ny; }
+}
+
+function tickTeamPositioning(team) {
+  team.players.forEach((p, i) => {
+    if (team.isHuman && i === activePlayerIdx) return; // active player moves via joystick
+    if (team.diveId === p.id && team.diveGetup > 0) return;
+
+    // Repulsion: keep inactive player clear of active player
+    if (team.isHuman) {
+      const ap = team.players[activePlayerIdx];
+      const d  = dist2(p.x, p.y, ap.x, ap.y);
+      if (d < 2.0) nudgeAwayFrom(p, team.posTargets[i], ap.x, ap.y, 0.03);
+    }
+
+    if (!team.posTargets[i]) return;
+    const { x:tx, y:ty } = team.posTargets[i];
+    if (moveToward(p, tx, ty, team.isHuman ? 4 : 14)) team.posTargets[i] = null;
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NET CROSSING
+// ─────────────────────────────────────────────────────────────────────────────
+function handleNetCrossing(prevY) {
+  const crossed = (prevY < COURT.netY && ball.y >= COURT.netY)
+               || (prevY > COURT.netY && ball.y <= COURT.netY);
+  if (!crossed) return;
+
+  if (ball.z < PHYSICS.netHeight && ball.z > 0) {
+    // Ball hit the net — bounce back toward sender
+    // hitCount is NOT reset: remaining hits carry over (e.g. hit 1 into net = 2 hits left)
+    // lastHitterId stays set: the player who hit it into the net cannot save it — other player must
+    ball.y   = prevY;   // push back to just before net
+    ball.vy *= -PHYSICS.netBounceFactor; // reverse y, lose energy
+    ball.vx *= PHYSICS.netFriction;      // lose x velocity from net friction
+    showMsg('Net! 😬', 1200);
+  } else if (ball.z >= PHYSICS.netHeight && prevY > COURT.netY && ball.y <= COURT.netY && ball.vy < 0) {
+    // Ball cleanly crossed FROM their side TO our side (vy < 0 = moving toward us)
+    // Fresh possession: reset our hitCount so we get 3 fresh hits
+    // ball.z >= netHeight ensures we don't trigger this on a net bounce returning to our side
+    US.hitCount = 0; updateHits();
+    { const lp = ballLandPos();
+      if (lp) {
+        const eligible = US.players.filter(p => p.id !== US.lastHitterId);
+        const best = eligible.length === 1 ? eligible[0]
+                   : eligible.reduce((a, b) =>
+                       dist2(a.x, a.y, lp.x, lp.y) <= dist2(b.x, b.y, lp.x, lp.y) ? a : b);
+        switchActivePlayer(US.players.indexOf(best));
+      } }
+    planTeamReceive(US);
+  } else if (ball.z >= PHYSICS.netHeight && prevY < COURT.netY && ball.y >= COURT.netY && ball.vy > 0) {
+    // Ball cleanly crossed FROM our side TO their side (vy > 0 = moving away)
+    // Fresh possession for them: reset their hitCount
+    // ball.z >= netHeight ensures we don't trigger this on a net bounce returning to their side
+    THEM.hitCount = 0;
+    planTeamReceive(THEM);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCORING
+// ─────────────────────────────────────────────────────────────────────────────
+function endRally(delay = 2600) {
+  rallyActive = false; ballInPlay = false;
+  setTimeout(serveBall, delay);
+}
+
+function scorePoint() {
+  ball.vx = ball.vy = ball.vz = 0;
+  rallyActive = false; ballInPlay = false;
+
+  const inBounds  = ball.y >= COURT.ourBackY
+                 && ball.y <= COURT.oppBackY
+                 && Math.abs(ball.x) <= COURT.halfWidth;
+  const usHitLast = US.players.some(p => p.id === US.lastHitterId);
+
+  if (inBounds) {
+    // Lands in bounds: point to team on opposite side from landing
+    if (ball.y > COURT.netY) {
+      animations.push({ type:'burst', x:ball.x, y:ball.y, z:0, t:0, maxT:1.0 });
+      awardPoint(US,   'Point! 🏐');
+    } else {
+      awardPoint(THEM, 'Their point! 😬');
+    }
+  } else {
+    // Out of bounds: point to team that did NOT last touch
+    if (usHitLast) {
+      awardPoint(THEM, 'Out! 😬');
+    } else {
+      animations.push({ type:'burst', x:ball.x, y:ball.y, z:0, t:0, maxT:1.0 });
+      awardPoint(US,   'Point! (their out) 🏐');
+    }
+  }
+  setTimeout(serveBall, 2600);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MAIN PHYSICS TICK
+// ─────────────────────────────────────────────────────────────────────────────
+function physTick() {
+  const prevY = ball.y;
+  ball.x  += ball.vx  * PHYSICS.dt;
+  ball.y  += ball.vy  * PHYSICS.dt;
+  ball.z  += ball.vz  * PHYSICS.dt;
+  ball.vz += PHYSICS.gravity * PHYSICS.dt;
+
+  handleNetCrossing(prevY);
+
+  // Decay timers
+  [US, THEM].forEach(team => {
+    if (team.hitCooldown > 0)  team.hitCooldown  -= PHYSICS.dt;
+    if (team.diveAnim    > 0)  team.diveAnim     -= PHYSICS.dt * 0.7;
+    if (team.diveGetup   > 0)  team.diveGetup    -= PHYSICS.dt;
+  });
+
+  landingPos = ballLandPos(); // cache for render — avoids physics call in draw
+
+  // Score on landing
+  if (ball.z <= 0
+    || (ball.y > COURT.oppBackY + 0.5 && ball.z < 0.5)
+    || (ball.y < COURT.ourBackY - 1   && ball.z < 0.5)) {
+    scorePoint();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SERVE
+// ─────────────────────────────────────────────────────────────────────────────
+function resetTeam(team, startPositions) {
+  team.hitCount    = 0;
+  team.hitCooldown = 0;
+  team.lastHitterId= -1;
+  team.players.forEach((p, i) => {
+    p.x = startPositions[i].x; p.y = startPositions[i].y;
+    p.jumpZ = 0; p.jumpVz = 0;
+  });
+}
+
+function serveBall() {
+  resetTeam(US,   [{ x:-1.5, y:3.5  }, { x:1.5, y:3.5  }]);
+  resetTeam(THEM, [{ x:-1.5, y:14.5 }, { x:1.5, y:14.5 }]);
+  updateHits();
+
+  Object.assign(swipe, {
+    active:false, jumping:false, spiked:false, runTarget:null,
+    power:false,  playerId:-1,   maxDy:0,      targetWorld:null,
+  });
+
+  // Randomised serve from net toward our side
+  const r  = Math.random();
+  let tX = rnd(-3.5, 3.5), tY = rnd(1.5, 7.5);
+  if (r < 0.05) tY = rnd(8.5, 10.5);   // near-net drop
+  if (r > 0.95) tX = (Math.random()<0.5?-1:1) * rnd(4.2, 5.2); // line shot
+
+  ball.x = rnd(-2, 2); ball.y = COURT.netY + 0.5; ball.z = PHYSICS.netHeight + rnd(0.3, 0.9);
+  const tf = rnd(1.2, 1.8);
+  ball.vz = (-ball.z - 0.5*PHYSICS.gravity*tf*tf) / tf;
+  ball.vx = (tX - ball.x) / tf;
+  ball.vy = (tY - ball.y) / tf;
+
+  ballInPlay  = true;
+  rallyActive = true;
+  planTeamReceive(US);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RENDER
+// ─────────────────────────────────────────────────────────────────────────────
+function drawCourt() {
+  // Sky
+  const sky = ctx.createLinearGradient(0, 0, 0, H*0.5);
+  sky.addColorStop(0, '#0d1b2a'); sky.addColorStop(1, '#16344f');
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
+
+  // Court corners
+  const c00  = p3(-COURT.halfWidth, COURT.ourBackY, 0);
+  const c10  = p3( COURT.halfWidth, COURT.ourBackY, 0);
+  const c09  = p3(-COURT.halfWidth, COURT.netY,     0);
+  const c19  = p3( COURT.halfWidth, COURT.netY,     0);
+  const c918 = p3(-COURT.halfWidth, COURT.oppBackY, 0);
+  const c1918= p3( COURT.halfWidth, COURT.oppBackY, 0);
+
+  // Our court fill
+  const fl = ctx.createLinearGradient(0, c00.y, 0, c09.y);
+  fl.addColorStop(0, '#1a3f17'); fl.addColorStop(1, '#2e6b28');
+  ctx.beginPath();
+  ctx.moveTo(c00.x,c00.y); ctx.lineTo(c10.x,c10.y);
+  ctx.lineTo(c19.x,c19.y); ctx.lineTo(c09.x,c09.y);
+  ctx.closePath(); ctx.fillStyle = fl; ctx.fill();
+
+  // Opp court fill
+  const ofl = ctx.createLinearGradient(0, c09.y, 0, c918.y);
+  ofl.addColorStop(0, '#2e6b28'); ofl.addColorStop(1, '#1a3f17');
+  ctx.beginPath();
+  ctx.moveTo(c09.x,c09.y); ctx.lineTo(c19.x,c19.y);
+  ctx.lineTo(c1918.x,c1918.y); ctx.lineTo(c918.x,c918.y);
+  ctx.closePath(); ctx.fillStyle = ofl; ctx.fill();
+
+  // Boundary and attack lines
+  ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 1.5; ctx.setLineDash([]);
+  [[c00,c10],[c918,c1918],[c00,c918],[c10,c1918]].forEach(([a,b]) => {
+    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+  });
+  ctx.setLineDash([5,5]);
+  [COURT.attackLine, COURT.oppAttack].forEach(ay => {
+    const a = p3(-COURT.halfWidth, ay, 0), b = p3(COURT.halfWidth, ay, 0);
+    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+  });
+  ctx.setLineDash([]);
+
+  // Net
+  const nTL = p3(-COURT.halfWidth, COURT.netY, PHYSICS.netHeight);
+  const nTR = p3( COURT.halfWidth, COURT.netY, PHYSICS.netHeight);
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = 0.8;
+  for (let xi = -COURT.halfWidth; xi <= COURT.halfWidth+0.1; xi += 0.9) {
+    const a = p3(xi,COURT.netY,0), b = p3(xi,COURT.netY,PHYSICS.netHeight);
+    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+  }
+  for (let zi = 0.2; zi < PHYSICS.netHeight; zi += 0.25) {
+    const a = p3(-COURT.halfWidth,COURT.netY,zi), b = p3(COURT.halfWidth,COURT.netY,zi);
+    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+  }
+  ctx.strokeStyle = 'white'; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(nTL.x,nTL.y); ctx.lineTo(nTR.x,nTR.y); ctx.stroke();
+  ctx.strokeStyle = '#ccc'; ctx.lineWidth = 3;
+  const nBL = p3(-COURT.halfWidth,COURT.netY,0), nBR = p3(COURT.halfWidth,COURT.netY,0);
+  [[nBL,nTL],[nBR,nTR]].forEach(([a,b]) => {
+    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+  });
+
+  // Ball shadow and landing circle
+  if (ballInPlay) {
+    const sp   = p3(ball.x, ball.y, 0);
+    const bp   = p3(ball.x, ball.y, ball.z);
+    const fade = 1 - clamp(ball.z/10, 0, 1);
+    const sr   = bp.scale * 12 * fade;
+    if (sr > 1) {
+      ctx.beginPath();
+      ctx.ellipse(sp.x, sp.groundY, sr*1.4, sr*0.5, 0, 0, Math.PI*2);
+      ctx.fillStyle = `rgba(0,0,0,${0.5*fade})`; ctx.fill();
+    }
+  }
+  if (rallyActive && ballInPlay) {
+    const lp = landingPos;
+    if (lp && lp.t > 0) {
+      const tp = p3(lp.x, lp.y, 0);
+      ctx.beginPath();
+      ctx.ellipse(tp.x, tp.groundY, tp.scale*18+4, tp.scale*6+2, 0, 0, Math.PI*2);
+      ctx.strokeStyle = lp.y <= COURT.netY ? 'rgba(255,220,50,0.7)' : 'rgba(255,80,80,0.7)';
+      ctx.lineWidth = 2; ctx.setLineDash([4,3]); ctx.stroke(); ctx.setLineDash([]);
+    }
+  }
+}
+
+// Draw one player — same for both teams
+function drawPlayer(p, team, isActive) {
+  const jz  = p.jumpZ || 0;
+  const pr  = p3(p.x, p.y, jz);
+  const gpr = p3(p.x, p.y, 0);
+  const r   = pr.scale * 18 + 4;
+  const isDiving = team.diveId === p.id && team.diveAnim > 0;
+  const sf  = 1 - clamp(jz/2.5, 0, 0.7);
+
+  // Shadow
+  ctx.beginPath();
+  ctx.ellipse(gpr.x, gpr.groundY+2, r*0.9*sf, r*0.3*sf, 0, 0, Math.PI*2);
+  ctx.fillStyle = `rgba(0,0,0,${0.4*sf})`; ctx.fill();
+
+  // Body
+  ctx.fillStyle = p.col || team.col;
+  if (isDiving) {
+    ctx.save(); ctx.translate(pr.x, pr.groundY); ctx.rotate(-0.55);
+    ctx.beginPath(); ctx.ellipse(0,0,r*1.9,r*0.65,0,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  } else {
+    ctx.beginPath(); ctx.ellipse(pr.x, pr.y, r*0.52, r*0.85, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(pr.x, pr.y - r*1.65, r*0.42, 0, Math.PI*2);
+    ctx.fillStyle = '#f5cba7'; ctx.fill();
+  }
+
+  // Active ring
+  if (isActive) {
+    ctx.beginPath(); ctx.arc(gpr.x, gpr.groundY, r*0.7, 0, Math.PI*2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 2;
+    ctx.setLineDash([4,3]); ctx.stroke(); ctx.setLineDash([]);
+  }
+
+  // Name label
+  if (p.name) {
+    ctx.fillStyle = '#fff';
+    ctx.font = `bold ${Math.round(pr.scale*14+6)}px Courier New`;
+    ctx.textAlign = 'center';
+    ctx.fillText(p.name, gpr.x, gpr.groundY + r*0.5 + 12);
+  }
+}
+
+function drawAllPlayers() {
+  // Draw opp first (behind net), then us (in front)
+  THEM.players.forEach(p => drawPlayer(p, THEM, false));
+  US.players.forEach((p, i) => drawPlayer(p, US, i === activePlayerIdx));
+}
+
+function drawBall() {
+  if (!ballInPlay) return;
+  const bp = p3(ball.x, ball.y, ball.z);
+  const r  = clamp(bp.scale*16, 4, 28);
+  const g  = ctx.createRadialGradient(bp.x-r*0.3, bp.y-r*0.3, r*0.1, bp.x, bp.y, r);
+  g.addColorStop(0, '#fffde7'); g.addColorStop(0.5, '#ffd54f'); g.addColorStop(1, '#f57c00');
+  ctx.beginPath(); ctx.arc(bp.x, bp.y, r, 0, Math.PI*2);
+  ctx.fillStyle = g; ctx.fill();
+  ctx.strokeStyle = '#e65100'; ctx.lineWidth = 1; ctx.stroke();
+  ctx.strokeStyle = 'rgba(180,70,0,0.4)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.ellipse(bp.x,bp.y,r,r*0.35,Math.PI/6,0,Math.PI*2); ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(bp.x,bp.y,r*0.35,r,Math.PI/6,0,Math.PI*2); ctx.stroke();
+}
+
+function tickAnims() {
+  // Advance timers and expire finished animations — no drawing
+  animations = animations.filter(a => { a.t += PHYSICS.dt; return a.t <= a.maxT; });
+}
+
+function drawAnim(a) {
+  const f  = a.t / a.maxT;
+  const pr = p3(a.x, a.y, a.z);
+  if (a.type === 'spark') {
+    for (let i = 0; i < 6; i++) {
+      const ang = i/6*Math.PI*2, d = f*22;
+      ctx.beginPath();
+      ctx.arc(pr.x+Math.cos(ang)*d, pr.y+Math.sin(ang)*d, 2.5*(1-f), 0, Math.PI*2);
+      ctx.fillStyle = `rgba(255,220,50,${1-f})`; ctx.fill();
+    }
+  } else if (a.type === 'burst') {
+    for (let i = 0; i < 12; i++) {
+      const ang = i/12*Math.PI*2, d = f*55;
+      ctx.beginPath();
+      ctx.arc(pr.x+Math.cos(ang)*d, pr.y+Math.sin(ang)*d*0.3, 4*(1-f), 0, Math.PI*2);
+      ctx.fillStyle = `rgba(255,200,50,${1-f})`; ctx.fill();
+    }
+  }
+}
+
+function drawAnims() {
+  animations.forEach(drawAnim);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INPUT EVENT LISTENERS
+// ─────────────────────────────────────────────────────────────────────────────
+jzone.addEventListener('touchstart',  e => { e.preventDefault(); jBegin(e.touches[0].clientX, e.touches[0].clientY); },            { passive:false });
+jzone.addEventListener('touchmove',   e => { e.preventDefault(); jMove(e.changedTouches[0].clientX, e.changedTouches[0].clientY); },{ passive:false });
+jzone.addEventListener('touchend',    () => jEnd());
+jzone.addEventListener('touchcancel', () => jEnd());
+jzone.addEventListener('mousedown',   e => jBegin(e.clientX, e.clientY));
+window.addEventListener('mousemove',  e => jMove(e.clientX, e.clientY));
+window.addEventListener('mouseup',    () => jEnd());
+
+canvas.addEventListener('touchstart', e => { e.preventDefault(); canvasSwipeStart(e.touches[0].clientX, e.touches[0].clientY); },            { passive:false });
+canvas.addEventListener('touchmove',  e => { e.preventDefault(); canvasSwipeMove(e.changedTouches[0].clientX, e.changedTouches[0].clientY); },{ passive:false });
+canvas.addEventListener('touchend',   e => canvasSwipeEnd(e.changedTouches[0].clientX, e.changedTouches[0].clientY));
+canvas.addEventListener('mousedown',  e => canvasSwipeStart(e.clientX, e.clientY));
+canvas.addEventListener('mousemove',  e => { if (swipe.active) canvasSwipeMove(e.clientX, e.clientY); });
+canvas.addEventListener('mouseup',    e => canvasSwipeEnd(e.clientX, e.clientY));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// START / RESTART
+// ─────────────────────────────────────────────────────────────────────────────
+function doStart() {
+  startOverlay.style.display = 'none';
+  gameStarted = true;
+  serveBall();
+}
+
+function doRestart() {
+  US.score = 0; THEM.score = 0; updateScore();
+  resetTeam(US,   [{ x:-1.5, y:3.5  }, { x:1.5, y:3.5  }]);
+  resetTeam(THEM, [{ x:-1.5, y:14.5 }, { x:1.5, y:14.5 }]);
+  US.posTargets   = [null, null];
+  THEM.posTargets = [null, null];
+  updateHits();
+  ballInPlay = rallyActive = gameStarted = false;
+  startOverlay.style.display = 'flex';
+}
+
+startBtn.addEventListener('click',     doStart);
+startBtn.addEventListener('touchend',  e => { e.preventDefault(); doStart(); });
+restartBtn.addEventListener('click',    doRestart);
+restartBtn.addEventListener('touchend', e => { e.preventDefault(); doRestart(); });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GAME LOOP
+// ─────────────────────────────────────────────────────────────────────────────
+function tick() {
+  setTimeout(tick, PHYSICS.tickMs);
+  if (!gameStarted || !ballInPlay) return;
+
+  physTick();
+  tickAllJumpPhysics();
+  tickRunToTarget();
+  checkSpikeContact();
+  tickTeamPositioning(US);
+  tickTeamPositioning(THEM);
+  tickAnims();
+
+  // AI runs at reduced rate to avoid bang-bang
+  [US, THEM].forEach(team => {
+    team.aiCd -= PHYSICS.dt;
+    if (team.aiCd <= 0) {
+      aiTickTeam(team);
+      team.aiCd = 0.07;
+    }
+  });
+}
+
+function render() {
+  requestAnimationFrame(render);
+  drawCourt();
+  drawAnims();
+  drawAllPlayers();
+  drawBall();
+}
+
+tick();
+render();
+</script>
+</body>
+</html>
