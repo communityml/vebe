@@ -14,6 +14,7 @@
   #restart-btn:active { background:rgba(255,255,255,0.25); }
   #score { color:#fff; font-size:22px; font-weight:bold; letter-spacing:3px; text-shadow:0 0 12px #4fc3f7; }
   #hits  { color:#ffd54f; font-size:16px; letter-spacing:4px; }
+  #hud   { position:absolute; top:52px; left:0; right:0; text-align:center; color:#4fc3f7; font-size:12px; font-family:'Courier New',monospace; pointer-events:none; letter-spacing:1px; z-index:10; }
   #msg   { position:absolute; bottom:14px; left:0; right:0; text-align:center; color:#fff; font-size:18px; font-weight:bold; opacity:0; transition:opacity 0.25s; pointer-events:none; text-shadow:0 0 12px #4fc3f7; z-index:10; }
   #msg.show { opacity:1; }
   #jzone { flex-shrink:0; height:18vh; min-height:75px; max-height:130px; background:rgba(255,255,255,0.04); border-top:1px solid rgba(255,255,255,0.12); display:flex; align-items:center; justify-content:center; touch-action:none; position:relative; cursor:grab; }
@@ -35,6 +36,7 @@
     <div id="hits"></div>
   </div>
   <div id="msg"></div>
+  <div id="hud"></div>
   <div id="start-overlay">
     <h1>🏐 VOLLEYBALL</h1>
     <p>Drag bottom zone to move<br>Swipe on court to run &amp; spike<br>Swipe up then down for power spike</p>
@@ -189,6 +191,7 @@ const jdot        = document.getElementById('jdot');
 const startOverlay= document.getElementById('start-overlay');
 const startBtn    = document.getElementById('start-btn');
 const restartBtn  = document.getElementById('restart-btn');
+const hudEl       = document.getElementById('hud');
 
 let W, H;
 function resize() {
@@ -214,13 +217,16 @@ const PHYSICS = Object.freeze({
   peakTimeFrac:    0.38,  // fraction of flight time to arc peak
   preciseThresh:   0.8,   // metres — closer = precise contact
   bumpThresh:      3.0,   // metres — closer = bump, farther = dive
-  aiHitRange:      3.5,   // metres — auto-hit range
+  aiHitRange:      2.0,   // metres — auto-hit range
   aiDiveRange:     6.0,   // metres — dive range
   aiDiveMaxZ:      0.5,   // ball must be this low for dive
   aiHitMaxZ:       1.5,   // ball must be this low for auto-hit
   spikePeakRadius: 5.0,  // contact detection radius at jump peak
   spikeRadius:     2.0,  // contact detection radius off peak
   spikeZOffset:    0.2,  // ball z placed just above contact point at spike
+  playerHeight:    1.9,  // standing height in metres
+  armReach:        0.3,  // reach above head at jump peak
+  spikeUpswingThresh: 0, // max jumpVz allowed at contact (0=apex+down, positive=allow some upswing)
 });
 
 const COURT = Object.freeze({
@@ -396,6 +402,13 @@ const swipe = {
   targetWorld: null,
 };
 
+// Jump telemetry — updated each tick, read by HUD render
+let hudJumpPeak  = 0;     // theoretical peak height from triggerJump
+let hudJumpMaxZ  = 0;     // actual max jumpZ reached this jump
+let hudContactZ  = null;  // reachZ at moment of last spike contact
+let hudPeakDist  = null;  // 3D dist from reachZ to ball at moment jumpVz first <= 0
+let hudPeakBallZ = null;  // ball.z at moment jumpVz first <= 0
+
 // ─────────────────────────────────────────────────────────────────────────────
 // UI HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -406,6 +419,30 @@ function updateHits() {
   hitsEl.textContent = US.hitCount
     ? [1,2,3].map(i => i <= US.hitCount ? '●' : '○').join(' ')
     : '';
+}
+function updateHud() {
+  const p = US.players[activePlayerIdx];
+  const jumping = playerIsJumping(p);
+  if (jumping) {
+    hudJumpMaxZ = Math.max(hudJumpMaxZ, p.jumpZ);
+    // Freeze ball distance at the first tick where contact check could fire (jumpVz <= threshold)
+    if (hudPeakDist === null && p.jumpVz <= PHYSICS.spikeUpswingThresh) {
+      const reachZ = playerReachZ(p);
+      const dx = ball.x-p.x, dy = ball.y-p.y, dz = ball.z-reachZ;
+      hudPeakDist  = Math.sqrt(dx*dx + dy*dy + dz*dz);
+      hudPeakBallZ = ball.z; // freeze ball height at apex
+    }
+  } else {
+    hudJumpMaxZ  = 0;
+    hudPeakDist  = null; // reset when not jumping
+    hudPeakBallZ = null;
+  }
+  const peakStr    = hudJumpPeak  ? `peak(theory):${hudJumpPeak.toFixed(2)}m` : '';
+  const maxStr     = jumping      ? `peak(actual):${hudJumpMaxZ.toFixed(2)}m`  : '';
+  const distStr    = hudPeakDist  !== null ? `ball-dist@apex:${hudPeakDist.toFixed(2)}m` : '';
+  const ballZStr   = hudPeakBallZ !== null ? `ball-z@apex:${hudPeakBallZ.toFixed(2)}m`    : '';
+  const contactStr = hudContactZ !== null ? `contact:${hudContactZ.toFixed(2)}m  net:${PHYSICS.netHeight.toFixed(2)}m` : '';
+  hudEl.textContent = [peakStr, maxStr, distStr, ballZStr, contactStr].filter(Boolean).join('  |  ');
 }
 function showMsg(txt, dur = 1800) {
   msgEl.textContent = txt;
@@ -466,23 +503,33 @@ function setBallArc(fx, fy, tx, ty, peakZ, tf) {
   ball.vz = (peakZ - ball.z - 0.5*PHYSICS.gravity*th*th) / th;
 }
 
+// Minimum-arc parabola from (fy,fz) to (targetY,0) that exactly clears the net
+// Returns {tf, vz}; tf derived from closed form: sqrt(2*(fz*(1-k)-netH)/(g*k*(k-1)))
+function spikeMinArcTf(fy, fz, targetY) {
+  const g   = Math.abs(PHYSICS.gravity);
+  const k   = (COURT.netY - fy) / (targetY - fy); // fraction of flight time at net crossing
+  const tf2 = 2 * (fz*(1-k) - PHYSICS.netHeight) / (g * k * (k-1));
+  const tf  = tf2 > 0 ? Math.sqrt(tf2) : 0.5;     // fallback if geometry unsolvable
+  const vz  = (0.5*g*tf*tf - fz) / tf;             // lands at z=0 by construction
+  return { tf, vz };
+}
+
+// Lofted arc: rises 2m above contact height, target position only affects vx/vy
+// Returns {tf, vz}
+function spikeLoftedArc(fz) {
+  const peak = fz + 2.0;
+  const vz   = vzForPeak(fz, peak);
+  const tUp  = vz / Math.abs(PHYSICS.gravity);
+  const tDown= Math.sqrt(2 * peak / Math.abs(PHYSICS.gravity));
+  const tf   = tUp + tDown;
+  return { tf, vz };
+}
+
 // Ball velocity to spike from contact point to target floor point
-// power=true: steep downward drive; power=false: normal arc
+// power=true: minimum-arc (just clears net); power=false: lofted arc
 function computeSpikeVelocity(fx, fy, fz, tx, ty, power) {
-  const targetY = Math.max(ty, COURT.netY + 1.5); // always land on opp side
-  let vz, tf;
-  if (power) {
-    vz = -8.0; // strong downward drive m/s
-    tf = solveQuadPos(0.5*PHYSICS.gravity, vz, fz);
-    if (!tf) tf = 0.4;
-  } else {
-    const peak    = fz + 2.0;
-    const vzUp    = vzForPeak(fz, peak);
-    const tUp     = vzUp / Math.abs(PHYSICS.gravity);
-    const tDown   = Math.sqrt(2 * peak / Math.abs(PHYSICS.gravity));
-    vz = vzUp;
-    tf = tUp + tDown;
-  }
+  const targetY   = Math.max(ty, COURT.netY + 1.5); // always land on opp side
+  const { tf, vz } = power ? spikeMinArcTf(fy, fz, targetY) : spikeLoftedArc(fz);
   return { vx:(tx-fx)/tf, vy:(targetY-fy)/tf, vz, tf };
 }
 
@@ -517,12 +564,19 @@ function tickRunToTarget() {
   moveToward(p, swipe.runTarget.x, swipe.runTarget.y, 14);
 }
 
+// Height of player's contact point (feet + standing height + arm reach)
+function playerReachZ(p) {
+  return p.jumpZ + PHYSICS.playerHeight + PHYSICS.armReach;
+}
+
 // Check if jumping human player contacts ball and fire spike
 function checkSpikeContact() {
   if (!ballInPlay || swipe.spiked || swipe.playerId < 0) return;
   const p = US.players.find(pl => pl.id === swipe.playerId);
   if (!p || (p.jumpVz === 0 && p.jumpZ === 0)) return;
-  const dx = ball.x-p.x, dy = ball.y-p.y, dz = ball.z-p.jumpZ;
+  if (p.jumpVz > PHYSICS.spikeUpswingThresh) return; // no contact on way up
+  const reachZ = playerReachZ(p);                          // contact point above feet
+  const dx = ball.x-p.x, dy = ball.y-p.y, dz = ball.z-reachZ;
   const dist3 = Math.sqrt(dx*dx + dy*dy + dz*dz);
   const atPeak = p.jumpVz <= 0 && p.jumpVz > -3;
   if (dist3 > (atPeak ? PHYSICS.spikePeakRadius : PHYSICS.spikeRadius)) return;
@@ -532,8 +586,9 @@ function checkSpikeContact() {
   const tgt = (swipe.targetWorld && swipe.targetWorld.y > COURT.netY)
     ? swipe.targetWorld
     : { x:rnd(-3.5,3.5), y:rnd(11,17) };
-  const sv = computeSpikeVelocity(p.x, p.y, p.jumpZ, tgt.x, tgt.y, swipe.power);
-  ball.x=p.x; ball.y=p.y; ball.z=p.jumpZ+PHYSICS.spikeZOffset;
+  hudContactZ = reachZ; // record contact height for HUD
+  const sv = computeSpikeVelocity(p.x, p.y, reachZ, tgt.x, tgt.y, swipe.power);
+  ball.x=p.x; ball.y=p.y; ball.z=reachZ+PHYSICS.spikeZOffset;
   ball.vx=sv.vx; ball.vy=sv.vy; ball.vz=sv.vz;
 
   // Spike counts as a hit — check fault, record, then reset as ball crosses net
@@ -619,8 +674,10 @@ function updateSpikeTarget(sx, sy) {
 }
 
 function detectPowerSpike(finalDy) {
-  // Power gesture: swipe up significantly then back down 70%+
-  swipe.power = swipe.maxDy > 30 && finalDy < swipe.maxDy * 0.3;
+  // Power spike: finger came down from peak at all, and target is on opponent court
+  swipe.power = finalDy < swipe.maxDy
+             && swipe.targetWorld !== null
+             && swipe.targetWorld.y > COURT.netY;
 }
 
 function triggerJump() {
@@ -630,6 +687,10 @@ function triggerJump() {
   const ppm = pixelsPerMetre(p);
   const heightM = clamp((swipe.maxDy / ppm) * 3, 0.5, 4.0);
   p.jumpVz    = vzForPeak(p.jumpZ, heightM);
+  hudJumpPeak   = heightM; // record theoretical peak for HUD
+  hudJumpMaxZ   = 0;       // reset actual max for new jump
+  hudPeakDist   = null;    // reset frozen ball distance for new jump
+  hudPeakBallZ  = null;    // reset frozen ball height for new jump
   swipe.jumping = true;
 }
 
@@ -791,7 +852,7 @@ function doPass(team, player, spread, towardNet) {
   const toX = clamp(rnd(-spread, spread), -4.0, 4.0);
   const toY = clamp(team.midY + towardNet*2.5 + rnd(-spread*0.5, spread*0.5),
                     team.midY, team.midY + towardNet*3.5);
-  setBallArc(ball.x, ball.y, toX, toY, 5.0, 1.8);
+  setBallArc(ball.x, ball.y, toX, toY, 7.0, 1.8);
   showMsg(spread < 0.5 ? 'Pass! 👌' : 'Pass!');
   posAfterPass(team, player);
 }
@@ -802,7 +863,7 @@ function doSet(team, player, spread, towardNet) {
   const toX   = clamp(sideX + rnd(-spread, spread), -COURT.halfWidth, COURT.halfWidth);
   const toY   = clamp(team.midY + towardNet*1.5 + rnd(-spread, spread),
                       team.midY + towardNet*0.5, team.midY + towardNet*2.5);
-  setBallArc(ball.x, ball.y, toX, toY, 4.5, 1.5);
+  setBallArc(ball.x, ball.y, toX, toY, 6.5, 1.5);
   showMsg(spread < 0.5 ? 'Set! 👌' : 'Set!');
   posAfterSet(team, player);
 }
@@ -1326,6 +1387,7 @@ function render() {
   requestAnimationFrame(render);
   drawCourt();
   drawAnims();
+  updateHud();
   drawAllPlayers();
   drawBall();
 }
