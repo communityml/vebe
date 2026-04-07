@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Sensor Probe 003</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Courier+Prime:ital,wght@0,400;0,700;1,400&display=swap');
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0a0a0c; --panel: #111116; --border: #2a2a35; --dim: #3a3a4a;
+    --text: #c8c8d8; --muted: #5a5a6a; --accent: #7b6fff;
+    --green: #4fffb0; --amber: #ffb84f; --red: #ff5f6d; --cyan: #4fd8ff;
+  }
+  html, body { height: 100%; background: var(--bg); color: var(--text);
+    font-family: 'Courier Prime', monospace; font-size: 13px; overflow: hidden; }
+  #app { display: flex; flex-direction: column; height: 100%; padding: 10px; gap: 8px; }
+  header { display: flex; align-items: baseline; justify-content: space-between;
+    padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted); }
+  #mode-badge { font-size: 10px; letter-spacing: 0.15em; padding: 2px 8px;
+    border: 1px solid var(--accent); color: var(--accent); border-radius: 2px; transition: all 0.3s; }
+  #perm-bar { display: flex; gap: 6px; }
+  .perm-btn { flex: 1; padding: 8px 4px; background: var(--panel); border: 1px solid var(--border);
+    color: var(--muted); font-family: inherit; font-size: 11px; letter-spacing: 0.1em;
+    text-transform: uppercase; cursor: pointer; transition: all 0.2s; border-radius: 2px; }
+  .perm-btn:active { background: #1a1a22; }
+  .perm-btn.granted { border-color: var(--green); color: var(--green); }
+  .perm-btn.denied  { border-color: var(--red); color: var(--red); }
+  .perm-btn.pending { border-color: var(--amber); color: var(--amber); animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.5} }
+  #grid { flex: 1; display: grid; grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr 1fr; gap: 6px; overflow: hidden; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 3px;
+    padding: 8px; display: flex; flex-direction: column; gap: 4px; overflow: hidden; }
+  .panel.wide { grid-column: span 2; }
+  .panel-label { font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted);
+    display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
+  .panel-label .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--dim); transition: background 0.3s; }
+  .panel.active .dot { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .panel.warn .dot   { background: var(--amber); }
+  .panel.dead .dot   { background: var(--red); }
+  canvas.spectro { width: 100%; flex: 1; display: block; }
+  #touch-canvas { width: 100%; flex: 1; display: block; }
+  #log-area { border-top: 1px solid var(--border); padding-top: 6px;
+    display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }
+  #log-header { display: flex; align-items: center; justify-content: space-between; }
+  #log-title { font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted); }
+  #copy-btn { font-family: inherit; font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase;
+    background: none; border: 1px solid var(--border); color: var(--muted);
+    padding: 2px 8px; cursor: pointer; border-radius: 2px; transition: all 0.2s; }
+  #copy-btn.flash { border-color: var(--green); color: var(--green); }
+  #log-lines { display: flex; flex-direction: column; gap: 1px; max-height: 60px; overflow: hidden; }
+  .log-line { font-size: 10px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .log-line span { color: var(--cyan); }
+  #snap-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.94);
+    z-index: 100; flex-direction: column; padding: 14px; gap: 10px; }
+  #snap-overlay.visible { display: flex; }
+  #snap-overlay h2 { font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--cyan); }
+  #snap-overlay p { font-size: 11px; color: var(--muted); line-height: 1.6; }
+  #snap-text { flex: 1; background: var(--panel); border: 1px solid var(--border);
+    color: var(--green); font-family: 'Courier Prime', monospace; font-size: 10px;
+    padding: 8px; resize: none; border-radius: 3px; -webkit-user-select: all; user-select: all; }
+  #snap-close { font-family: inherit; font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+    background: none; border: 1px solid var(--border); color: var(--muted);
+    padding: 10px; cursor: pointer; border-radius: 2px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Sensor Probe 003</h1>
+    <div id="mode-badge">NO PERMS</div>
+  </header>
+  <div id="perm-bar">
+    <button class="perm-btn" id="btn-motion" onclick="requestMotion()">Motion</button>
+    <button class="perm-btn" id="btn-orient" onclick="requestOrient()">Orient</button>
+    <button class="perm-btn" id="btn-mic"    onclick="requestMic()">Mic</button>
+  </div>
+  <div id="grid">
+
+    <!-- Orientation spectrogram: alpha, beta, gamma over time -->
+    <div class="panel" id="panel-orient">
+      <div class="panel-label">
+        Orientation
+        <span id="orient-vals" style="font-size:9px;color:var(--text)">a:-- b:-- g:--</span>
+        <div class="dot"></div>
+      </div>
+      <canvas class="spectro" id="canvas-orient"></canvas>
+    </div>
+
+    <!-- Micro-motion spectrogram: lx, ly, lz (gravity removed) over time -->
+    <div class="panel" id="panel-motion">
+      <div class="panel-label">
+        Micro-motion
+        <span id="motion-vals" style="font-size:9px;color:var(--text)">x:-- y:-- z:--</span>
+        <div class="dot"></div>
+      </div>
+      <canvas class="spectro" id="canvas-motion"></canvas>
+    </div>
+
+    <!-- Micro-motion magnitude waveform -->
+    <div class="panel" id="panel-jitter">
+      <div class="panel-label">
+        Jitter magnitude
+        <span id="jitter-vals" style="font-size:9px;color:var(--text)">--</span>
+        <div class="dot"></div>
+      </div>
+      <canvas class="spectro" id="canvas-jitter"></canvas>
+    </div>
+
+    <!-- Mic spectrogram -->
+    <div class="panel" id="panel-spectro">
+      <div class="panel-label">
+        Mic spectrogram
+        <span id="mic-vals" style="font-size:9px;color:var(--text)">--</span>
+        <div class="dot"></div>
+      </div>
+      <canvas class="spectro" id="canvas-spectro"></canvas>
+    </div>
+
+    <!-- Touch map -->
+    <div class="panel wide" id="panel-touch">
+      <div class="panel-label">Touch Map <div class="dot"></div></div>
+      <canvas id="touch-canvas"></canvas>
+    </div>
+
+  </div>
+  <div id="log-area">
+    <div id="log-header">
+      <span id="log-title">Event log</span>
+      <button id="copy-btn" onclick="copySnapshot()">Copy Snapshot</button>
+    </div>
+    <div id="log-lines">
+      <div class="log-line" id="log0">--</div>
+      <div class="log-line" id="log1">--</div>
+      <div class="log-line" id="log2">--</div>
+      <div class="log-line" id="log3">--</div>
+    </div>
+  </div>
+</div>
+
+<div id="snap-overlay">
+  <h2>SNAPSHOT -- long-press, Select All, Copy</h2>
+  <p>Long-press the green text, tap Select All, then Copy.</p>
+  <textarea id="snap-text" readonly></textarea>
+  <button id="snap-close" onclick="document.getElementById('snap-overlay').classList.remove('visible')">Close</button>
+</div>
+
+<script>
+// ── Constants
+const COLS = 100;       // scrolling history columns
+const GRAVITY_A = 0.85; // low-pass alpha for gravity estimation
+
+// ── State
+const S = {
+  orient: { alpha:0, beta:0, gamma:0, active:false },
+  motion: { x:0, y:0, z:0, active:false },
+  gravity: { x:0, y:0, z:0 },
+  linear: { x:0, y:0, z:0 },    // gravity-removed
+  jitter: { mag:0, peak:0, samples:0 },
+  mic: { active:false, peak:0, avg:0, sampleCount:0, runningSum:0,
+         hist: new Array(8).fill(0), histCount:0 },
+  touch: { points:[], held:false },
+  perms: { motion:'unknown', orient:'unknown', mic:'unknown' },
+};
+
+// Scrolling history buffers — each tick pushes one column
+// Orient: 3 channels [alpha/360, (beta+90)/180, (gamma+90)/180] → [0,1]
+const orientHist  = [];  // each entry: [a,b,g] normalized 0-1
+// Motion: 3 channels lx,ly,lz normalized by ±range
+const motionHist  = [];  // each entry: [lx,ly,lz] normalized 0-1 (0.5=zero)
+// Jitter: magnitude history
+const jitterHist  = [];  // each entry: number
+// Mic: freq bins
+const spectroHist = [];  // each entry: Uint8Array
+
+// ── Log
+const logLines = [];
+function log(msg, tag) {
+  const ts = new Date().toLocaleTimeString('en',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  logLines.unshift({ts,msg,tag});
+  if (logLines.length > 4) logLines.pop();
+  logLines.forEach((l,i) => {
+    const el = document.getElementById('log'+i);
+    if (!el) return;
+    el.innerHTML = '<span>'+l.ts+'</span> '+(l.tag?'<span style="color:var(--'+l.tag+')">['+l.tag+']</span> ':'')+l.msg;
+  });
+}
+
+// ── Snapshot
+function buildSnapshotText() {
+  const lines = [];
+  lines.push('=== SENSOR PROBE 003 SNAPSHOT ===');
+  lines.push('Time: ' + new Date().toISOString());
+  lines.push('UA: ' + navigator.userAgent);
+  lines.push('');
+  lines.push('-- Permissions --');
+  lines.push('Motion:      ' + S.perms.motion);
+  lines.push('Orientation: ' + S.perms.orient);
+  lines.push('Mic:         ' + S.perms.mic);
+  lines.push('');
+  lines.push('-- Orientation (current) --');
+  if (S.orient.active)
+    lines.push('Alpha:'+S.orient.alpha.toFixed(1)+' Beta:'+S.orient.beta.toFixed(1)+' Gamma:'+S.orient.gamma.toFixed(1));
+  else lines.push('Not active');
+  lines.push('');
+  lines.push('-- Motion (current) --');
+  if (S.motion.active) {
+    lines.push('Raw   X:'+S.motion.x.toFixed(2)+' Y:'+S.motion.y.toFixed(2)+' Z:'+S.motion.z.toFixed(2));
+    lines.push('Grav  X:'+S.gravity.x.toFixed(2)+' Y:'+S.gravity.y.toFixed(2)+' Z:'+S.gravity.z.toFixed(2));
+    lines.push('Linear X:'+S.linear.x.toFixed(3)+' Y:'+S.linear.y.toFixed(3)+' Z:'+S.linear.z.toFixed(3));
+    lines.push('Jitter mag:'+S.jitter.mag.toFixed(4)+' peak:'+S.jitter.peak.toFixed(4)+' samples:'+S.jitter.samples);
+    if (jitterHist.length > 1) {
+      const recent = jitterHist.slice(-20);
+      lines.push('Jitter stddev(20):'+stddev(recent).toFixed(4));
+      lines.push('Jitter min/max:'+Math.min(...recent).toFixed(3)+'/'+Math.max(...recent).toFixed(3));
+    }
+  } else lines.push('Not active');
+  lines.push('');
+  lines.push('-- Mic --');
+  if (S.mic.active) {
+    lines.push('Peak:'+S.mic.peak.toFixed(4)+' Avg:'+S.mic.avg.toFixed(4)+' Samples:'+S.mic.sampleCount);
+    const hc = S.mic.histCount||1;
+    lines.push('Freq hist: '+S.mic.hist.map((v,i)=>'B'+i+':'+((v/hc)*100).toFixed(1)+'%').join(' '));
+  } else lines.push('Not active');
+  lines.push('');
+  lines.push('-- Touch --');
+  if (S.touch.points.length) {
+    S.touch.points.forEach((p,i) => {
+      const s=p.x<0.33?'L':p.x<0.66?'C':'R', v=p.y<0.5?'T':'B';
+      lines.push('P'+(i+1)+' x:'+p.x.toFixed(2)+' y:'+p.y.toFixed(2)+' zone:'+s+v+' r:'+p.r+' f:'+p.f.toFixed(2));
+    });
+  } else lines.push('No touch at snapshot time');
+  lines.push('');
+  lines.push('-- Event Log --');
+  logLines.forEach(l => lines.push(l.ts+' ['+(l.tag||'--')+'] '+l.msg));
+  lines.push('=== END ===');
+  return lines.join('\n');
+}
+
+function copySnapshot() {
+  const text = buildSnapshotText();
+  const ta = document.getElementById('snap-text');
+  ta.value = text;
+  document.getElementById('snap-overlay').classList.add('visible');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => {
+      const btn = document.getElementById('copy-btn');
+      btn.textContent='Copied!'; btn.classList.add('flash');
+      setTimeout(()=>{ btn.textContent='Copy Snapshot'; btn.classList.remove('flash'); },1500);
+    }).catch(()=>log('Clipboard blocked -- use overlay','amber'));
+  }
+  setTimeout(()=>{ ta.focus(); ta.select(); },100);
+}
+
+// ── Mode badge
+function updateModeBadge() {
+  const {motion,orient} = S.perms;
+  const mb = document.getElementById('mode-badge');
+  if (motion==='granted'&&orient==='granted') {
+    mb.textContent='FULL MODE'; mb.style.borderColor='var(--green)'; mb.style.color='var(--green)';
+  } else if (motion==='granted'||orient==='granted') {
+    mb.textContent='PARTIAL'; mb.style.borderColor='var(--amber)'; mb.style.color='var(--amber)';
+  } else {
+    mb.textContent='TOUCH ONLY'; mb.style.borderColor='var(--dim)'; mb.style.color='var(--dim)';
+  }
+}
+
+// ── Permissions
+async function requestMotion() {
+  const btn = document.getElementById('btn-motion');
+  btn.className='perm-btn pending'; log('Requesting DeviceMotion...','amber');
+  if (typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function') {
+    try {
+      const r = await DeviceMotionEvent.requestPermission();
+      S.perms.motion=r; btn.className='perm-btn '+(r==='granted'?'granted':'denied');
+      log('DeviceMotion: '+r, r==='granted'?'green':'red');
+      if (r==='granted') startMotion();
+    } catch(e) { S.perms.motion='denied'; btn.className='perm-btn denied'; log('Motion error: '+e.message,'red'); }
+  } else {
+    S.perms.motion='granted'; btn.className='perm-btn granted';
+    log('DeviceMotion: auto-granted','green'); startMotion();
+  }
+  updateModeBadge();
+}
+
+async function requestOrient() {
+  const btn = document.getElementById('btn-orient');
+  btn.className='perm-btn pending'; log('Requesting DeviceOrientation...','amber');
+  if (typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function') {
+    try {
+      const r = await DeviceOrientationEvent.requestPermission();
+      S.perms.orient=r; btn.className='perm-btn '+(r==='granted'?'granted':'denied');
+      log('DeviceOrientation: '+r, r==='granted'?'green':'red');
+      if (r==='granted') startOrient();
+    } catch(e) { S.perms.orient='denied'; btn.className='perm-btn denied'; log('Orient error: '+e.message,'red'); }
+  } else {
+    S.perms.orient='granted'; btn.className='perm-btn granted';
+    log('DeviceOrientation: auto-granted','green'); startOrient();
+  }
+  updateModeBadge();
+}
+
+async function requestMic() {
+  const btn = document.getElementById('btn-mic');
+  btn.className='perm-btn pending'; log('Requesting microphone...','amber');
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+    S.perms.mic='granted'; btn.className='perm-btn granted';
+    log('Microphone: granted','green'); startMic(stream);
+  } catch(e) {
+    S.perms.mic='denied'; btn.className='perm-btn denied';
+    log('Mic denied: '+e.message,'red');
+  }
+  updateModeBadge();
+}
+
+// ── Sensor listeners
+function startOrient() {
+  window.addEventListener('deviceorientation', e => {
+    S.orient.alpha = e.alpha||0;
+    S.orient.beta  = e.beta||0;
+    S.orient.gamma = e.gamma||0;
+    S.orient.active = true;
+    // Push normalized column: alpha 0-360→0-1, beta -90..90→0-1 (clamped), gamma same
+    orientHist.push([
+      S.orient.alpha / 360,
+      clamp((S.orient.beta  + 90) / 180, 0, 1),
+      clamp((S.orient.gamma + 90) / 180, 0, 1),
+    ]);
+    if (orientHist.length > COLS) orientHist.shift();
+  });
+}
+
+const MOTION_RANGE = 4; // m/s2 range for micro-motion display (post gravity removal)
+function startMotion() {
+  window.addEventListener('devicemotion', e => {
+    const a = e.accelerationIncludingGravity || e.acceleration || {};
+    S.motion.x = a.x||0; S.motion.y = a.y||0; S.motion.z = a.z||0;
+    S.motion.active = true;
+    // Gravity low-pass
+    S.gravity.x = GRAVITY_A*S.gravity.x + (1-GRAVITY_A)*S.motion.x;
+    S.gravity.y = GRAVITY_A*S.gravity.y + (1-GRAVITY_A)*S.motion.y;
+    S.gravity.z = GRAVITY_A*S.gravity.z + (1-GRAVITY_A)*S.motion.z;
+    // Linear (gravity removed)
+    S.linear.x = S.motion.x - S.gravity.x;
+    S.linear.y = S.motion.y - S.gravity.y;
+    S.linear.z = S.motion.z - S.gravity.z;
+    // Jitter magnitude
+    S.jitter.mag = Math.sqrt(S.linear.x**2 + S.linear.y**2 + S.linear.z**2);
+    S.jitter.samples++;
+    if (S.jitter.mag > S.jitter.peak) S.jitter.peak = S.jitter.mag;
+
+    // Push motion column: each channel centered 0.5, range ±MOTION_RANGE
+    motionHist.push([
+      clamp(0.5 + S.linear.x / (2*MOTION_RANGE), 0, 1),
+      clamp(0.5 + S.linear.y / (2*MOTION_RANGE), 0, 1),
+      clamp(0.5 + S.linear.z / (2*MOTION_RANGE), 0, 1),
+    ]);
+    if (motionHist.length > COLS) motionHist.shift();
+
+    jitterHist.push(S.jitter.mag);
+    if (jitterHist.length > COLS) jitterHist.shift();
+  });
+}
+
+let micAnalyser, micFreqData;
+function startMic(stream) {
+  const ctx = new AudioContext();
+  micAnalyser = ctx.createAnalyser();
+  micAnalyser.fftSize = 256;
+  micAnalyser.smoothingTimeConstant = 0.6;
+  ctx.createMediaStreamSource(stream).connect(micAnalyser);
+  micFreqData = new Uint8Array(micAnalyser.frequencyBinCount);
+  S.mic.active = true;
+  log('Mic: '+micAnalyser.frequencyBinCount+' bins','green');
+}
+
+function tickMic() {
+  if (!micAnalyser) return;
+  micAnalyser.getByteFrequencyData(micFreqData);
+  const avg = micFreqData.reduce((a,b)=>a+b,0) / micFreqData.length / 255;
+  S.mic.sampleCount++;
+  S.mic.runningSum += avg;
+  S.mic.avg = S.mic.runningSum / S.mic.sampleCount;
+  if (avg > S.mic.peak) S.mic.peak = avg;
+  const bpb = Math.floor(micFreqData.length/8);
+  S.mic.histCount++;
+  for (let b=0;b<8;b++) {
+    let s=0; for(let i=0;i<bpb;i++) s+=micFreqData[b*bpb+i];
+    S.mic.hist[b] += s/bpb/255;
+  }
+  spectroHist.push(new Uint8Array(micFreqData));
+  if (spectroHist.length > COLS) spectroHist.shift();
+}
+
+// ── Touch
+const touchCanvas = document.getElementById('touch-canvas');
+function setupTouch() {
+  touchCanvas.addEventListener('touchstart', e=>{
+    e.preventDefault(); S.touch.held=true; updateTouches(e);
+    setPanel('panel-touch','active');
+    log('Touch: '+e.touches.length+' point(s)','cyan');
+  },{passive:false});
+  touchCanvas.addEventListener('touchmove', e=>{ e.preventDefault(); updateTouches(e); },{passive:false});
+  touchCanvas.addEventListener('touchend', e=>{
+    e.preventDefault();
+    if(e.touches.length===0){S.touch.held=false;S.touch.points=[];setPanel('panel-touch','');}
+    else updateTouches(e);
+  },{passive:false});
+}
+function updateTouches(e) {
+  const rect=touchCanvas.getBoundingClientRect();
+  S.touch.points=Array.from(e.touches).map(t=>({
+    x:(t.clientX-rect.left)/rect.width, y:(t.clientY-rect.top)/rect.height,
+    r:t.radiusX||10, f:t.force||0,
+  }));
+}
+
+function setPanel(id,cls) {
+  const wide=(id==='panel-touch')?' wide':'';
+  document.getElementById(id).className='panel'+wide+(cls?' '+cls:'');
+}
+
+// ── Helpers
+function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+function stddev(arr){
+  if(arr.length<2)return 0;
+  const m=arr.reduce((a,b)=>a+b,0)/arr.length;
+  return Math.sqrt(arr.reduce((s,v)=>s+(v-m)**2,0)/arr.length);
+}
+
+// ── Canvas setup
+const canvases = {
+  orient:  { el: document.getElementById('canvas-orient'),  ctx: null },
+  motion:  { el: document.getElementById('canvas-motion'),  ctx: null },
+  jitter:  { el: document.getElementById('canvas-jitter'),  ctx: null },
+  spectro: { el: document.getElementById('canvas-spectro'), ctx: null },
+};
+Object.values(canvases).forEach(c => c.ctx = c.el.getContext('2d'));
+const tCtx = touchCanvas.getContext('2d');
+
+function resizeCanvases() {
+  Object.values(canvases).forEach(c => {
+    const r = c.el.parentElement.getBoundingClientRect();
+    c.el.width  = r.width  - 16;
+    c.el.height = r.height - 28;
+  });
+  const tr = touchCanvas.parentElement.getBoundingClientRect();
+  touchCanvas.width  = tr.width  - 16;
+  touchCanvas.height = tr.height - 28;
+}
+
+// ── Draw helpers
+
+// Draw a 3-channel scrolling spectrogram (channels stacked vertically)
+// history: array of [c0,c1,c2] normalized 0-1
+// colors: [hsl string per channel]
+function draw3ChSpectro(ctx, w, h, history, colors, label, vals) {
+  ctx.clearRect(0,0,w,h);
+  if (history.length === 0) {
+    ctx.fillStyle='#3a3a4a'; ctx.font='10px Courier Prime,monospace';
+    ctx.fillText('awaiting data...',6,h/2); return;
+  }
+  const rowH = h / 3;
+  const colW = w / COLS;
+
+  history.forEach((col, ci) => {
+    const x = ci * colW;
+    col.forEach((v, ch) => {
+      // v=0.5 is center/zero; brightness encodes deviation from center
+      const dev = Math.abs(v - 0.5) * 2; // 0=zero, 1=max deflection
+      if (dev < 0.01) return;
+      const [h0,s0,l0] = colors[ch];
+      ctx.fillStyle = 'hsl('+h0+','+s0+'%,'+(8+dev*l0)+'%)';
+      const y = ch * rowH;
+      // bar grows from center of each row toward top/bottom based on sign
+      const mid = y + rowH/2;
+      const barH = dev * rowH * 0.9;
+      if (v >= 0.5) {
+        ctx.fillRect(x, mid - barH, Math.ceil(colW)+1, barH);
+      } else {
+        ctx.fillRect(x, mid, Math.ceil(colW)+1, barH);
+      }
+    });
+  });
+
+  // Row dividers and labels
+  colors.forEach((_,ch) => {
+    const y = ch*rowH;
+    ctx.strokeStyle='#1e1e28'; ctx.lineWidth=1;
+    if (ch>0) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
+    // Center zero line
+    ctx.strokeStyle='#2a2a35'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(0,y+rowH/2); ctx.lineTo(w,y+rowH/2); ctx.stroke();
+  });
+
+  // Newest value readout
+  if (vals) {
+    ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(0,0,w,12);
+    ctx.fillStyle='var(--text)'; ctx.font='9px Courier Prime,monospace';
+    ctx.fillText(vals, 4, 10);
+  }
+}
+
+// Orientation: alpha uses full 0-1 range (not centered), beta and gamma are centered
+function drawOrient() {
+  const {el,ctx} = canvases.orient;
+  const w=el.width, h=el.height;
+  ctx.clearRect(0,0,w,h);
+  if (!S.orient.active) {
+    ctx.fillStyle='#3a3a4a'; ctx.font='10px Courier Prime,monospace';
+    ctx.fillText('awaiting orientation...',6,h/2); return;
+  }
+  const rowH = h/3;
+  const colW = w/COLS;
+  // Row colors: alpha=accent(purple), beta=cyan, gamma=green
+  const rowColors = ['#7b6fff','#4fd8ff','#4fffb0'];
+  const rowLabels = ['a','b','g'];
+
+  // Alpha: fill bar from left proportional to value
+  // Beta/gamma: centered bar
+  orientHist.forEach((col, ci) => {
+    const x = ci*colW;
+    // Alpha row (ch 0): left-fill
+    {
+      const v = col[0];
+      const intensity = v; // 0-1
+      ctx.fillStyle = 'hsl(255,70%,'+(8+intensity*55)+'%)';
+      ctx.fillRect(x, 0, Math.ceil(colW)+1, rowH * intensity);
+    }
+    // Beta (ch 1): centered
+    {
+      const v = col[1]; // 0=up, 1=down, 0.5=level
+      const dev = v - 0.5;
+      const barH = Math.abs(dev) * rowH * 0.9;
+      ctx.fillStyle = 'hsl(196,80%,'+(8+Math.abs(dev)*2*55)+'%)';
+      const mid = rowH + rowH/2;
+      if (dev>=0) ctx.fillRect(x, mid-barH, Math.ceil(colW)+1, barH);
+      else ctx.fillRect(x, mid, Math.ceil(colW)+1, barH);
+    }
+    // Gamma (ch 2): centered
+    {
+      const v = col[2];
+      const dev = v - 0.5;
+      const barH = Math.abs(dev) * rowH * 0.9;
+      ctx.fillStyle = 'hsl(151,90%,'+(8+Math.abs(dev)*2*40)+'%)';
+      const mid = 2*rowH + rowH/2;
+      if (dev>=0) ctx.fillRect(x, mid-barH, Math.ceil(colW)+1, barH);
+      else ctx.fillRect(x, mid, Math.ceil(colW)+1, barH);
+    }
+  });
+
+  // Dividers
+  for (let i=1;i<3;i++) {
+    ctx.strokeStyle='#1e1e28'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(0,i*rowH); ctx.lineTo(w,i*rowH); ctx.stroke();
+  }
+  // Zero lines for beta/gamma
+  for (let i=1;i<3;i++) {
+    ctx.strokeStyle='#2a2a35'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(0,i*rowH+rowH/2); ctx.lineTo(w,i*rowH+rowH/2); ctx.stroke();
+  }
+  // Row labels
+  rowLabels.forEach((lbl,i)=>{
+    ctx.fillStyle=rowColors[i]; ctx.font='9px Courier Prime,monospace';
+    ctx.fillText(lbl, 2, i*rowH+10);
+  });
+  // Header values
+  ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(0,0,w,12);
+  ctx.fillStyle='#c8c8d8'; ctx.font='9px Courier Prime,monospace';
+  ctx.fillText('a:'+S.orient.alpha.toFixed(0)+' b:'+S.orient.beta.toFixed(0)+' g:'+S.orient.gamma.toFixed(0), 4, 10);
+}
+
+function drawMotion() {
+  const {el,ctx} = canvases.motion;
+  const w=el.width, h=el.height;
+  ctx.clearRect(0,0,w,h);
+  if (!S.motion.active) {
+    ctx.fillStyle='#3a3a4a'; ctx.font='10px Courier Prime,monospace';
+    ctx.fillText('awaiting motion...',6,h/2); return;
+  }
+  const rowH = h/3;
+  const colW = w/COLS;
+  const rowColors = ['#ff5f6d','#ffb84f','#7b6fff'];
+  const rowLabels = ['x','y','z'];
+
+  motionHist.forEach((col, ci) => {
+    const x = ci*colW;
+    col.forEach((v,ch) => {
+      const dev = v - 0.5;
+      const barH = Math.abs(dev)*rowH*0.9;
+      if (barH < 0.5) return;
+      const hues = [0,35,255];
+      ctx.fillStyle='hsl('+hues[ch]+',80%,'+(10+Math.abs(dev)*2*50)+'%)';
+      const mid = ch*rowH + rowH/2;
+      if (dev>=0) ctx.fillRect(x, mid-barH, Math.ceil(colW)+1, barH);
+      else ctx.fillRect(x, mid, Math.ceil(colW)+1, barH);
+    });
+  });
+
+  for (let i=1;i<3;i++) {
+    ctx.strokeStyle='#1e1e28'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(0,i*rowH); ctx.lineTo(w,i*rowH); ctx.stroke();
+  }
+  for (let i=0;i<3;i++) {
+    ctx.strokeStyle='#2a2a35'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(0,i*rowH+rowH/2); ctx.lineTo(w,i*rowH+rowH/2); ctx.stroke();
+  }
+  rowLabels.forEach((lbl,i)=>{
+    ctx.fillStyle=rowColors[i]; ctx.font='9px Courier Prime,monospace';
+    ctx.fillText(lbl, 2, i*rowH+10);
+  });
+  ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(0,0,w,12);
+  ctx.fillStyle='#c8c8d8'; ctx.font='9px Courier Prime,monospace';
+  ctx.fillText('x:'+S.linear.x.toFixed(2)+' y:'+S.linear.y.toFixed(2)+' z:'+S.linear.z.toFixed(2)+
+               ' pk:'+S.jitter.peak.toFixed(2), 4, 10);
+}
+
+function drawJitter() {
+  const {el,ctx} = canvases.jitter;
+  const w=el.width, h=el.height;
+  ctx.clearRect(0,0,w,h);
+  if (jitterHist.length<2) {
+    ctx.fillStyle='#3a3a4a'; ctx.font='10px Courier Prime,monospace';
+    ctx.fillText('awaiting motion...',6,h/2); return;
+  }
+  const maxV = Math.max(...jitterHist, 0.3);
+  ctx.strokeStyle='#2a2a35'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(0,h*0.95); ctx.lineTo(w,h*0.95); ctx.stroke();
+
+  ctx.beginPath(); ctx.strokeStyle='#7b6fff'; ctx.lineWidth=1.5;
+  jitterHist.forEach((v,i)=>{
+    const x=(i/(COLS-1))*w, y=h*0.95-(v/maxV)*h*0.9;
+    i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+
+  ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(0,0,w,12);
+  ctx.fillStyle='#c8c8d8'; ctx.font='9px Courier Prime,monospace';
+  ctx.fillText('mag:'+S.jitter.mag.toFixed(3)+' pk:'+S.jitter.peak.toFixed(3), 4, 10);
+}
+
+function drawSpectro() {
+  const {el,ctx} = canvases.spectro;
+  const w=el.width, h=el.height;
+  ctx.clearRect(0,0,w,h);
+  if (!S.mic.active) {
+    ctx.fillStyle='#3a3a4a'; ctx.font='10px Courier Prime,monospace';
+    ctx.fillText('mic not active',6,h/2); return;
+  }
+  if (spectroHist.length===0) {
+    ctx.fillStyle='#3a3a4a'; ctx.font='10px Courier Prime,monospace';
+    ctx.fillText('waiting for audio...',6,h/2); return;
+  }
+  const numBins = spectroHist[0].length;
+  const colW = w/COLS;
+  const binH = h/numBins;
+
+  spectroHist.forEach((col,ci) => {
+    const x = ci*colW;
+    for (let bi=0;bi<numBins;bi++) {
+      const val = col[bi]/255;
+      if (val<0.02) continue;
+      const hue = 260 - val*220;
+      ctx.fillStyle='hsl('+hue+',70%,'+(8+val*55)+'%)';
+      ctx.fillRect(x, h-(bi+1)*binH, Math.ceil(colW)+1, Math.ceil(binH)+1);
+    }
+  });
+
+  // Freq axis labels right edge
+  ctx.fillStyle='rgba(0,0,0,0.4)'; ctx.fillRect(w-28,0,28,h);
+  [0,0.25,0.5,0.75,1].forEach(frac=>{
+    const freq=Math.round(22050*frac);
+    const y=h-frac*h;
+    ctx.fillStyle='#3a3a4a'; ctx.font='8px Courier Prime,monospace';
+    ctx.fillText(freq>=1000?(freq/1000).toFixed(0)+'k':freq+'', w-26, Math.max(8,Math.min(h-2,y+4)));
+  });
+
+  ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(0,0,w,12);
+  ctx.fillStyle='#4fd8ff'; ctx.font='9px Courier Prime,monospace';
+  ctx.fillText('pk:'+S.mic.peak.toFixed(3)+' avg:'+S.mic.avg.toFixed(3)+' n:'+S.mic.sampleCount, 4, 10);
+}
+
+function drawTouch() {
+  const w=touchCanvas.width, h=touchCanvas.height;
+  tCtx.clearRect(0,0,w,h);
+  tCtx.strokeStyle='#1e1e28'; tCtx.lineWidth=1;
+  for(let i=1;i<3;i++){tCtx.beginPath();tCtx.moveTo(w*i/3,0);tCtx.lineTo(w*i/3,h);tCtx.stroke();}
+  tCtx.beginPath();tCtx.moveTo(0,h/2);tCtx.lineTo(w,h/2);tCtx.stroke();
+  tCtx.fillStyle='#2a2a35'; tCtx.font='9px Courier Prime,monospace';
+  ['LEFT','CENTER','RIGHT'].forEach((z,i)=>tCtx.fillText(z,w*(i/3)+4,h-4));
+  tCtx.fillText('TOP',4,12); tCtx.fillText('BOT',4,h-14);
+  S.touch.points.forEach((p,idx)=>{
+    const x=p.x*w, y=p.y*h, r=Math.max(14,p.r);
+    const grd=tCtx.createRadialGradient(x,y,0,x,y,r*2.5);
+    grd.addColorStop(0,'rgba(79,255,176,0.35)'); grd.addColorStop(1,'rgba(79,255,176,0)');
+    tCtx.beginPath(); tCtx.fillStyle=grd; tCtx.arc(x,y,r*2.5,0,Math.PI*2); tCtx.fill();
+    tCtx.beginPath(); tCtx.strokeStyle='#4fffb0'; tCtx.lineWidth=1.5; tCtx.arc(x,y,r,0,Math.PI*2); tCtx.stroke();
+    tCtx.strokeStyle='rgba(79,255,176,0.4)'; tCtx.lineWidth=1;
+    tCtx.beginPath();tCtx.moveTo(x-r*1.8,y);tCtx.lineTo(x+r*1.8,y);tCtx.stroke();
+    tCtx.beginPath();tCtx.moveTo(x,y-r*1.8);tCtx.lineTo(x,y+r*1.8);tCtx.stroke();
+    tCtx.fillStyle='#4fffb0'; tCtx.font='9px Courier Prime,monospace';
+    const s=p.x<0.33?'L':p.x<0.66?'C':'R', v=p.y<0.5?'T':'B';
+    tCtx.fillText('#'+(idx+1)+' '+s+v+(p.f>0?' F:'+p.f.toFixed(2):''), x+r+3, y+4);
+  });
+  if(!S.touch.points.length){
+    tCtx.fillStyle='#2a2a35'; tCtx.font='10px Courier Prime,monospace';
+    tCtx.fillText('touch here...',w/2-40,h/2);
+  }
+}
+
+function updatePanelStates() {
+  setPanel('panel-orient', S.orient.active?'active':(S.perms.orient==='denied'?'dead':''));
+  setPanel('panel-motion', S.motion.active?(S.jitter.mag>0.05?'active':'warn'):(S.perms.motion==='denied'?'dead':''));
+  setPanel('panel-jitter', S.motion.active?'active':'');
+  setPanel('panel-spectro', S.mic.active?(S.mic.peak>0.01?'active':'warn'):(S.perms.mic==='denied'?'dead':''));
+}
+
+function frame() {
+  tickMic();
+  drawOrient(); drawMotion(); drawJitter(); drawSpectro(); drawTouch();
+  updatePanelStates();
+  requestAnimationFrame(frame);
+}
+
+window.addEventListener('resize', resizeCanvases);
+setupTouch(); resizeCanvases(); frame();
+log('Sensor probe 003 ready','cyan');
+</script>
+</body>
+</html>
