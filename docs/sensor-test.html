@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Sensor Probe</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Courier+Prime:ital,wght@0,400;0,700;1,400&display=swap');
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0a0a0c; --panel: #111116; --border: #2a2a35; --dim: #3a3a4a;
+    --text: #c8c8d8; --muted: #5a5a6a; --accent: #7b6fff;
+    --green: #4fffb0; --amber: #ffb84f; --red: #ff5f6d; --cyan: #4fd8ff;
+  }
+  html, body { height: 100%; background: var(--bg); color: var(--text);
+    font-family: 'Courier Prime', monospace; font-size: 13px; overflow: hidden; }
+  #app { display: flex; flex-direction: column; height: 100%; padding: 10px; gap: 8px; }
+  header { display: flex; align-items: baseline; justify-content: space-between;
+    padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted); }
+  #mode-badge { font-size: 10px; letter-spacing: 0.15em; padding: 2px 8px;
+    border: 1px solid var(--accent); color: var(--accent); border-radius: 2px; transition: all 0.3s; }
+  #perm-bar { display: flex; gap: 6px; }
+  .perm-btn { flex: 1; padding: 8px 4px; background: var(--panel); border: 1px solid var(--border);
+    color: var(--muted); font-family: inherit; font-size: 11px; letter-spacing: 0.1em;
+    text-transform: uppercase; cursor: pointer; transition: all 0.2s; border-radius: 2px; }
+  .perm-btn:active { background: #1a1a22; }
+  .perm-btn.granted { border-color: var(--green); color: var(--green); }
+  .perm-btn.denied  { border-color: var(--red);   color: var(--red); }
+  .perm-btn.pending { border-color: var(--amber);  color: var(--amber); animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
+  #grid { flex: 1; display: grid; grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr 1fr; gap: 6px; overflow: hidden; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 3px;
+    padding: 8px; display: flex; flex-direction: column; gap: 4px; position: relative; overflow: hidden; }
+  .panel.wide { grid-column: span 2; }
+  .panel-label { font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted);
+    display: flex; justify-content: space-between; align-items: center; }
+  .panel-label .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--dim); transition: background 0.3s; }
+  .panel.active .dot { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .panel.warn .dot   { background: var(--amber); }
+  .panel.dead .dot   { background: var(--red); }
+  .sub { font-size: 10px; color: var(--muted); }
+  .bar-wrap { display: flex; flex-direction: column; gap: 3px; flex: 1; justify-content: center; }
+  .bar-row { display: flex; align-items: center; gap: 5px; }
+  .bar-lbl { width: 10px; font-size: 10px; color: var(--muted); }
+  .bar-track { flex: 1; height: 4px; background: var(--border); border-radius: 2px;
+    overflow: visible; position: relative; }
+  .bar-fill { height: 100%; border-radius: 2px; transition: width 0.05s linear, background 0.3s;
+    position: absolute; top: 0; }
+  .bar-center { left: 50%; width: 0; }
+  .bar-num { width: 40px; font-size: 10px; color: var(--text); text-align: right; }
+  #touch-canvas  { width: 100%; flex: 1; display: block; }
+  #jitter-canvas { width: 100%; flex: 1; display: block; }
+  /* Log area */
+  #log-area { border-top: 1px solid var(--border); padding-top: 6px;
+    display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }
+  #log-header { display: flex; align-items: center; justify-content: space-between; }
+  #log-title { font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted); }
+  #copy-btn { font-family: inherit; font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase;
+    background: none; border: 1px solid var(--border); color: var(--muted);
+    padding: 2px 8px; cursor: pointer; border-radius: 2px; transition: all 0.2s; }
+  #copy-btn.flash { border-color: var(--green); color: var(--green); }
+  #log-lines { display: flex; flex-direction: column; gap: 1px; max-height: 72px; overflow: hidden; }
+  .log-line { font-size: 10px; color: var(--muted); white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
+  .log-line span { color: var(--cyan); }
+  /* Snapshot overlay */
+  #snap-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.94);
+    z-index: 100; flex-direction: column; padding: 14px; gap: 10px; }
+  #snap-overlay.visible { display: flex; }
+  #snap-overlay h2 { font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--cyan); }
+  #snap-overlay p { font-size: 11px; color: var(--muted); line-height: 1.6; }
+  #snap-text { flex: 1; background: var(--panel); border: 1px solid var(--border);
+    color: var(--green); font-family: 'Courier Prime', monospace; font-size: 10px;
+    padding: 8px; resize: none; border-radius: 3px;
+    -webkit-user-select: all; user-select: all; }
+  #snap-close { font-family: inherit; font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase;
+    background: none; border: 1px solid var(--border); color: var(--muted);
+    padding: 10px; cursor: pointer; border-radius: 2px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Sensor Probe</h1>
+    <div id="mode-badge">NO PERMS</div>
+  </header>
+  <div id="perm-bar">
+    <button class="perm-btn" id="btn-motion" onclick="requestMotion()">Motion</button>
+    <button class="perm-btn" id="btn-orient" onclick="requestOrient()">Orient</button>
+    <button class="perm-btn" id="btn-mic"    onclick="requestMic()">Mic</button>
+  </div>
+  <div id="grid">
+    <!-- Orientation -->
+    <div class="panel" id="panel-orient">
+      <div class="panel-label">Orientation <div class="dot"></div></div>
+      <div class="bar-wrap">
+        <div class="bar-row">
+          <span class="bar-lbl">a</span>
+          <div class="bar-track"><div class="bar-fill" id="bar-alpha" style="background:var(--accent);width:0%"></div></div>
+          <span class="bar-num" id="num-alpha">--</span>
+        </div>
+        <div class="bar-row">
+          <span class="bar-lbl">b</span>
+          <div class="bar-track"><div class="bar-fill bar-center" id="bar-beta" style="background:var(--cyan)"></div></div>
+          <span class="bar-num" id="num-beta">--</span>
+        </div>
+        <div class="bar-row">
+          <span class="bar-lbl">g</span>
+          <div class="bar-track"><div class="bar-fill bar-center" id="bar-gamma" style="background:var(--green)"></div></div>
+          <span class="bar-num" id="num-gamma">--</span>
+        </div>
+      </div>
+    </div>
+    <!-- Acceleration -->
+    <div class="panel" id="panel-motion">
+      <div class="panel-label">Acceleration <div class="dot"></div></div>
+      <div class="bar-wrap">
+        <div class="bar-row">
+          <span class="bar-lbl">x</span>
+          <div class="bar-track"><div class="bar-fill bar-center" id="bar-ax" style="background:var(--red)"></div></div>
+          <span class="bar-num" id="num-ax">--</span>
+        </div>
+        <div class="bar-row">
+          <span class="bar-lbl">y</span>
+          <div class="bar-track"><div class="bar-fill bar-center" id="bar-ay" style="background:var(--amber)"></div></div>
+          <span class="bar-num" id="num-ay">--</span>
+        </div>
+        <div class="bar-row">
+          <span class="bar-lbl">z</span>
+          <div class="bar-track"><div class="bar-fill bar-center" id="bar-az" style="background:var(--accent)"></div></div>
+          <span class="bar-num" id="num-az">--</span>
+        </div>
+      </div>
+    </div>
+    <!-- Jitter -->
+    <div class="panel" id="panel-jitter">
+      <div class="panel-label">Micro-motion / Jitter <div class="dot"></div></div>
+      <canvas id="jitter-canvas"></canvas>
+    </div>
+    <!-- Quality -->
+    <div class="panel" id="panel-quality">
+      <div class="panel-label">Signal Quality <div class="dot"></div></div>
+      <div style="display:flex;align-items:center;gap:10px;flex:1">
+        <svg viewBox="0 0 60 60" width="52" height="52" style="flex-shrink:0">
+          <circle cx="30" cy="30" r="24" fill="none" stroke="var(--border)" stroke-width="5"/>
+          <circle id="quality-ring" cx="30" cy="30" r="24" fill="none"
+                  stroke="var(--green)" stroke-width="5"
+                  stroke-dasharray="150.8" stroke-dashoffset="150.8"
+                  stroke-linecap="round" transform="rotate(-90 30 30)"
+                  style="transition:stroke-dashoffset 0.3s,stroke 0.3s"/>
+          <text id="quality-pct" x="30" y="34" text-anchor="middle"
+                font-family="Courier Prime,monospace" font-size="13" fill="var(--text)">0%</text>
+        </svg>
+        <div style="flex:1">
+          <div class="sub" id="quality-motion-lbl">Motion: --</div>
+          <div class="sub" id="quality-orient-lbl">Orient: --</div>
+          <div class="sub" id="quality-mic-lbl">Mic: --</div>
+          <div class="sub" id="quality-touch-lbl">Touch: --</div>
+        </div>
+      </div>
+    </div>
+    <!-- Touch map -->
+    <div class="panel wide" id="panel-touch">
+      <div class="panel-label">Touch Map -- hold anywhere <div class="dot"></div></div>
+      <canvas id="touch-canvas"></canvas>
+    </div>
+  </div>
+  <div id="log-area">
+    <div id="log-header">
+      <span id="log-title">Event log</span>
+      <button id="copy-btn" onclick="copySnapshot()">Copy Snapshot</button>
+    </div>
+    <div id="log-lines">
+      <div class="log-line" id="log0">--</div>
+      <div class="log-line" id="log1">--</div>
+      <div class="log-line" id="log2">--</div>
+      <div class="log-line" id="log3">--</div>
+      <div class="log-line" id="log4">--</div>
+    </div>
+  </div>
+</div>
+
+<!-- Snapshot overlay: shows text you can long-press select+copy -->
+<div id="snap-overlay">
+  <h2>SNAPSHOT -- long-press text below, Select All, Copy</h2>
+  <p>Clipboard auto-copy may be blocked on your browser.<br>Long-press the green text, tap Select All, then Copy.</p>
+  <textarea id="snap-text" readonly></textarea>
+  <button id="snap-close" onclick="document.getElementById('snap-overlay').classList.remove('visible')">Close</button>
+</div>
+
+<script>
+const S = {
+  orient: { alpha:0, beta:0, gamma:0, active:false, quality:0 },
+  motion: { x:0, y:0, z:0, active:false, quality:0 },
+  mic:    { level:0, active:false },
+  touch:  { points:[], held:false, quality:0 },
+  jitter: { history:[], maxLen:80 },
+  perms:  { motion:'unknown', orient:'unknown', mic:'unknown' },
+};
+
+// ── Log
+const logLines = [];
+function log(msg, tag) {
+  const ts = new Date().toLocaleTimeString('en',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  logLines.unshift({ts,msg,tag});
+  if (logLines.length > 5) logLines.pop();
+  logLines.forEach((l,i) => {
+    const el = document.getElementById('log'+i);
+    if (!el) return;
+    el.innerHTML = `<span>${l.ts}</span> ${l.tag?`<span style="color:var(--${l.tag})">[${l.tag}]</span> `:''}${l.msg}`;
+  });
+}
+
+// ── Snapshot
+function buildSnapshotText() {
+  const lines = [];
+  lines.push('=== SENSOR PROBE SNAPSHOT ===');
+  lines.push('Time: ' + new Date().toISOString());
+  lines.push('UA: ' + navigator.userAgent);
+  lines.push('');
+  lines.push('-- Permissions --');
+  lines.push('Motion:      ' + S.perms.motion);
+  lines.push('Orientation: ' + S.perms.orient);
+  lines.push('Mic:         ' + S.perms.mic);
+  lines.push('');
+  lines.push('-- Orientation --');
+  if (S.orient.active) {
+    lines.push('Alpha: '+S.orient.alpha.toFixed(1)+'  Beta: '+S.orient.beta.toFixed(1)+'  Gamma: '+S.orient.gamma.toFixed(1));
+    lines.push('Quality: '+S.orient.quality.toFixed(2));
+  } else { lines.push('Not active'); }
+  lines.push('');
+  lines.push('-- Acceleration --');
+  if (S.motion.active) {
+    lines.push('X: '+S.motion.x.toFixed(2)+'  Y: '+S.motion.y.toFixed(2)+'  Z: '+S.motion.z.toFixed(2));
+    lines.push('Quality: '+S.motion.quality.toFixed(2));
+    const hist = S.jitter.history.slice(-20);
+    if (hist.length) {
+      lines.push('Jitter stddev (last 20): '+stddev(hist).toFixed(3));
+      lines.push('Jitter min/max: '+Math.min(...hist).toFixed(2)+' / '+Math.max(...hist).toFixed(2));
+    }
+  } else { lines.push('Not active'); }
+  lines.push('');
+  lines.push('-- Mic --');
+  lines.push(S.mic.active ? 'Level: '+getMicLevel().toFixed(3) : 'Not active');
+  lines.push('');
+  lines.push('-- Touch --');
+  if (S.touch.points.length) {
+    S.touch.points.forEach((p,i) => {
+      const side  = p.x < 0.33 ? 'LEFT' : p.x < 0.66 ? 'CENTER' : 'RIGHT';
+      const vside = p.y < 0.5  ? 'TOP'  : 'BOTTOM';
+      lines.push('Point '+(i+1)+': x='+p.x.toFixed(2)+' y='+p.y.toFixed(2)+
+        ' zone='+side+'/'+vside+' r='+p.r+' force='+p.f.toFixed(2));
+    });
+  } else { lines.push('No touch active at snapshot time'); }
+  lines.push('');
+  lines.push('-- Event Log --');
+  logLines.forEach(l => lines.push(l.ts+' ['+(l.tag||'--')+'] '+l.msg));
+  lines.push('=== END ===');
+  return lines.join('\n');
+}
+
+function copySnapshot() {
+  const text = buildSnapshotText();
+  // Always show the overlay so there's a manual fallback
+  const ta = document.getElementById('snap-text');
+  ta.value = text;
+  document.getElementById('snap-overlay').classList.add('visible');
+  // Also try clipboard
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => {
+      const btn = document.getElementById('copy-btn');
+      btn.textContent = 'Copied!';
+      btn.classList.add('flash');
+      setTimeout(() => { btn.textContent = 'Copy Snapshot'; btn.classList.remove('flash'); }, 1500);
+      log('Snapshot copied + overlay shown', 'green');
+    }).catch(() => {
+      log('Clipboard blocked -- use overlay to copy', 'amber');
+    });
+  } else {
+    log('Clipboard API unavailable -- use overlay', 'amber');
+  }
+  // Auto-select textarea text after a tick
+  setTimeout(() => { ta.focus(); ta.select(); }, 100);
+}
+
+// ── Mode badge
+function updateModeBadge() {
+  const {motion,orient} = S.perms;
+  const mb = document.getElementById('mode-badge');
+  if (motion==='granted' && orient==='granted') {
+    mb.textContent='FULL MODE'; mb.style.borderColor='var(--green)'; mb.style.color='var(--green)';
+  } else if (motion==='granted' || orient==='granted') {
+    mb.textContent='PARTIAL'; mb.style.borderColor='var(--amber)'; mb.style.color='var(--amber)';
+  } else {
+    mb.textContent='TOUCH ONLY'; mb.style.borderColor='var(--dim)'; mb.style.color='var(--dim)';
+  }
+}
+
+// ── Permissions
+async function requestMotion() {
+  const btn = document.getElementById('btn-motion');
+  btn.className = 'perm-btn pending';
+  log('Requesting DeviceMotion...', 'amber');
+  if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+    try {
+      const r = await DeviceMotionEvent.requestPermission();
+      S.perms.motion = r;
+      btn.className = 'perm-btn ' + (r==='granted'?'granted':'denied');
+      log('DeviceMotion: '+r, r==='granted'?'green':'red');
+      if (r==='granted') startMotion();
+    } catch(e) {
+      S.perms.motion='denied'; btn.className='perm-btn denied';
+      log('DeviceMotion error: '+e.message,'red');
+    }
+  } else {
+    S.perms.motion='granted'; btn.className='perm-btn granted';
+    log('DeviceMotion: auto-granted','green');
+    startMotion();
+  }
+  updateModeBadge();
+}
+
+async function requestOrient() {
+  const btn = document.getElementById('btn-orient');
+  btn.className = 'perm-btn pending';
+  log('Requesting DeviceOrientation...', 'amber');
+  if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+    try {
+      const r = await DeviceOrientationEvent.requestPermission();
+      S.perms.orient = r;
+      btn.className = 'perm-btn ' + (r==='granted'?'granted':'denied');
+      log('DeviceOrientation: '+r, r==='granted'?'green':'red');
+      if (r==='granted') startOrient();
+    } catch(e) {
+      S.perms.orient='denied'; btn.className='perm-btn denied';
+      log('DeviceOrientation error: '+e.message,'red');
+    }
+  } else {
+    S.perms.orient='granted'; btn.className='perm-btn granted';
+    log('DeviceOrientation: auto-granted','green');
+    startOrient();
+  }
+  updateModeBadge();
+}
+
+async function requestMic() {
+  const btn = document.getElementById('btn-mic');
+  btn.className = 'perm-btn pending';
+  log('Requesting microphone...', 'amber');
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+    S.perms.mic='granted'; btn.className='perm-btn granted';
+    log('Microphone: granted','green');
+    startMic(stream);
+  } catch(e) {
+    S.perms.mic='denied'; btn.className='perm-btn denied';
+    log('Microphone: denied -- '+e.message,'red');
+  }
+  updateModeBadge();
+}
+
+// ── Listeners
+function startMotion() {
+  window.addEventListener('devicemotion', e => {
+    const a = e.accelerationIncludingGravity || e.acceleration || {};
+    S.motion.x = a.x||0; S.motion.y = a.y||0; S.motion.z = a.z||0;
+    S.motion.active = true;
+    const mag = Math.sqrt(S.motion.x**2 + S.motion.y**2 + S.motion.z**2);
+    S.jitter.history.push(mag);
+    if (S.jitter.history.length > S.jitter.maxLen) S.jitter.history.shift();
+    const recent = S.jitter.history.slice(-20);
+    S.motion.quality = clamp(stddev(recent)/2, 0, 1);
+  });
+}
+
+function startOrient() {
+  window.addEventListener('deviceorientation', e => {
+    S.orient.alpha = e.alpha||0; S.orient.beta = e.beta||0; S.orient.gamma = e.gamma||0;
+    S.orient.active = true;
+    S.orient.quality = (e.beta!==null && e.gamma!==null) ? 1 : 0;
+  });
+}
+
+let micAnalyser, micData;
+function startMic(stream) {
+  const ctx = new AudioContext();
+  const src = ctx.createMediaStreamSource(stream);
+  micAnalyser = ctx.createAnalyser();
+  micAnalyser.fftSize = 256;
+  src.connect(micAnalyser);
+  micData = new Uint8Array(micAnalyser.frequencyBinCount);
+  S.mic.active = true;
+}
+function getMicLevel() {
+  if (!micAnalyser) return 0;
+  micAnalyser.getByteFrequencyData(micData);
+  return micData.reduce((a,b)=>a+b,0) / micData.length / 255;
+}
+
+// ── Touch
+const touchCanvas = document.getElementById('touch-canvas');
+function setupTouch() {
+  touchCanvas.addEventListener('touchstart', e => {
+    e.preventDefault(); S.touch.held=true; updateTouches(e);
+    setPanel('panel-touch','active');
+    log('Touch start: '+e.touches.length+' point(s)','cyan');
+  },{passive:false});
+  touchCanvas.addEventListener('touchmove', e => { e.preventDefault(); updateTouches(e); },{passive:false});
+  touchCanvas.addEventListener('touchend', e => {
+    e.preventDefault();
+    if (e.touches.length===0) { S.touch.held=false; S.touch.points=[]; setPanel('panel-touch',''); }
+    else updateTouches(e);
+  },{passive:false});
+}
+function updateTouches(e) {
+  const rect = touchCanvas.getBoundingClientRect();
+  S.touch.points = Array.from(e.touches).map(t=>({
+    x:(t.clientX-rect.left)/rect.width, y:(t.clientY-rect.top)/rect.height,
+    r:t.radiusX||10, f:t.force||0,
+  }));
+  S.touch.quality = clamp(e.touches.length/3,0,1);
+}
+
+// ── Panel state
+function setPanel(id,cls) {
+  document.getElementById(id).className='panel'+(id==='panel-touch'?' wide':'')+(cls?' '+cls:'');
+}
+
+// ── Helpers
+function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+function stddev(arr){
+  if(arr.length<2)return 0;
+  const m=arr.reduce((a,b)=>a+b,0)/arr.length;
+  return Math.sqrt(arr.reduce((s,v)=>s+(v-m)**2,0)/arr.length);
+}
+function centerBar(el,val,range){
+  const pct=clamp((val+range)/(2*range),0,1);
+  if(pct>=0.5){el.style.left='50%';el.style.width=(pct-0.5)*100+'%';}
+  else{el.style.left=pct*100+'%';el.style.width=(0.5-pct)*100+'%';}
+}
+
+// ── Render
+const jCanvas=document.getElementById('jitter-canvas');
+const jCtx=jCanvas.getContext('2d');
+const tCtx=touchCanvas.getContext('2d');
+
+function resizeCanvases(){
+  const jr=jCanvas.parentElement.getBoundingClientRect();
+  jCanvas.width=jr.width-16; jCanvas.height=jr.height-30;
+  const tr=touchCanvas.parentElement.getBoundingClientRect();
+  touchCanvas.width=tr.width-16; touchCanvas.height=tr.height-30;
+}
+
+function drawJitter(){
+  const w=jCanvas.width,h=jCanvas.height;
+  jCtx.clearRect(0,0,w,h);
+  const hist=S.jitter.history;
+  if(hist.length<2){
+    jCtx.fillStyle='#3a3a4a'; jCtx.font='10px Courier Prime,monospace';
+    jCtx.fillText('awaiting motion...',6,h/2); return;
+  }
+  const maxV=Math.max(...hist,12);
+  jCtx.beginPath(); jCtx.strokeStyle=S.motion.active?'#7b6fff':'#3a3a4a'; jCtx.lineWidth=1.5;
+  hist.forEach((v,i)=>{
+    const x=(i/(S.jitter.maxLen-1))*w, y=h-(v/maxV)*h*0.9;
+    i===0?jCtx.moveTo(x,y):jCtx.lineTo(x,y);
+  });
+  jCtx.stroke();
+  jCtx.fillStyle='#7b6fff'; jCtx.font='11px Courier Prime,monospace';
+  jCtx.fillText(hist[hist.length-1].toFixed(2)+' m/s2',4,12);
+}
+
+function drawTouch(){
+  const w=touchCanvas.width,h=touchCanvas.height;
+  tCtx.clearRect(0,0,w,h);
+  tCtx.strokeStyle='#1e1e28'; tCtx.lineWidth=1;
+  for(let i=1;i<3;i++){tCtx.beginPath();tCtx.moveTo(w*i/3,0);tCtx.lineTo(w*i/3,h);tCtx.stroke();}
+  tCtx.beginPath();tCtx.moveTo(0,h/2);tCtx.lineTo(w,h/2);tCtx.stroke();
+  tCtx.fillStyle='#2a2a35'; tCtx.font='9px Courier Prime,monospace';
+  ['LEFT','CENTER','RIGHT'].forEach((z,i)=>tCtx.fillText(z,w*(i/3)+4,h-4));
+  tCtx.fillText('TOP',4,12); tCtx.fillText('BOT',4,h-14);
+  S.touch.points.forEach((p,idx)=>{
+    const x=p.x*w,y=p.y*h,r=Math.max(14,p.r);
+    const grd=tCtx.createRadialGradient(x,y,0,x,y,r*2.5);
+    grd.addColorStop(0,'rgba(79,255,176,0.35)'); grd.addColorStop(1,'rgba(79,255,176,0)');
+    tCtx.beginPath(); tCtx.fillStyle=grd; tCtx.arc(x,y,r*2.5,0,Math.PI*2); tCtx.fill();
+    tCtx.beginPath(); tCtx.strokeStyle='#4fffb0'; tCtx.lineWidth=1.5;
+    tCtx.arc(x,y,r,0,Math.PI*2); tCtx.stroke();
+    tCtx.strokeStyle='rgba(79,255,176,0.4)'; tCtx.lineWidth=1;
+    tCtx.beginPath();tCtx.moveTo(x-r*1.8,y);tCtx.lineTo(x+r*1.8,y);tCtx.stroke();
+    tCtx.beginPath();tCtx.moveTo(x,y-r*1.8);tCtx.lineTo(x,y+r*1.8);tCtx.stroke();
+    tCtx.fillStyle='#4fffb0'; tCtx.font='9px Courier Prime,monospace';
+    const side=p.x<0.33?'L':p.x<0.66?'C':'R', vs=p.y<0.5?'T':'B';
+    const fp=p.f>0?' F:'+p.f.toFixed(2):'';
+    tCtx.fillText('#'+(idx+1)+' '+side+vs+fp,x+r+3,y+4);
+  });
+  if(!S.touch.points.length){
+    tCtx.fillStyle='#2a2a35'; tCtx.font='10px Courier Prime,monospace';
+    tCtx.fillText('touch here with one or more fingers...',w/2-100,h/2);
+  }
+}
+
+function updateQuality(){
+  const ml=S.motion.quality, ol=S.orient.quality, tl=S.touch.quality;
+  const overall=(( S.motion.active?ml:0)+(S.orient.active?ol:0)+(S.touch.held?tl:0))/3;
+  const circ=150.8;
+  const ring=document.getElementById('quality-ring');
+  ring.style.strokeDashoffset=circ*(1-overall);
+  ring.style.stroke=overall>0.6?'var(--green)':overall>0.3?'var(--amber)':'var(--red)';
+  document.getElementById('quality-pct').textContent=Math.round(overall*100)+'%';
+  document.getElementById('quality-motion-lbl').textContent='Motion: '+(S.motion.active?ml.toFixed(2):'--');
+  document.getElementById('quality-orient-lbl').textContent='Orient: '+(S.orient.active?ol.toFixed(2):'--');
+  document.getElementById('quality-mic-lbl').textContent='Mic: '+(S.mic.active?getMicLevel().toFixed(2):'--');
+  document.getElementById('quality-touch-lbl').textContent='Touch: '+(S.touch.held?tl.toFixed(2):'--');
+  setPanel('panel-orient',S.orient.active?(ol>0.5?'active':'warn'):(S.perms.orient==='denied'?'dead':''));
+  setPanel('panel-motion',S.motion.active?(ml>0.1?'active':'warn'):(S.perms.motion==='denied'?'dead':''));
+  setPanel('panel-jitter',S.motion.active?'active':'');
+  setPanel('panel-quality',overall>0.3?'active':'');
+}
+
+function frame(){
+  if(S.orient.active){
+    document.getElementById('bar-alpha').style.width=(S.orient.alpha/360*100)+'%';
+    document.getElementById('num-alpha').textContent=S.orient.alpha.toFixed(0)+'d';
+    centerBar(document.getElementById('bar-beta'),S.orient.beta,90);
+    document.getElementById('num-beta').textContent=S.orient.beta.toFixed(0)+'d';
+    centerBar(document.getElementById('bar-gamma'),S.orient.gamma,90);
+    document.getElementById('num-gamma').textContent=S.orient.gamma.toFixed(0)+'d';
+  }
+  if(S.motion.active){
+    const R=15;
+    centerBar(document.getElementById('bar-ax'),S.motion.x,R);
+    document.getElementById('num-ax').textContent=S.motion.x.toFixed(1);
+    centerBar(document.getElementById('bar-ay'),S.motion.y,R);
+    document.getElementById('num-ay').textContent=S.motion.y.toFixed(1);
+    centerBar(document.getElementById('bar-az'),S.motion.z,R);
+    document.getElementById('num-az').textContent=S.motion.z.toFixed(1);
+  }
+  drawJitter(); drawTouch(); updateQuality();
+  requestAnimationFrame(frame);
+}
+
+window.addEventListener('resize',resizeCanvases);
+setupTouch(); resizeCanvases(); frame();
+log('Sensor probe ready -- tap permission buttons','cyan');
+</script>
+</body>
+</html>
